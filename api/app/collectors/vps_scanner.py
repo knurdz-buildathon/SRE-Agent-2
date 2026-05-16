@@ -10,6 +10,7 @@ import os
 import re
 import socket
 import subprocess
+from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger("sre")
@@ -19,7 +20,6 @@ PROBE_HOST = os.getenv("PROBE_HOST", "host.docker.internal")
 VPS_SCAN_ENABLED = os.getenv("VPS_SCAN_ENABLED", "true").lower() == "true"
 
 HOST_PROC_NET_TCP = os.getenv("HOST_PROC_NET_TCP", "/host-proc/net/tcp")
-HOST_PROC_NET_TCP6 = os.getenv("HOST_PROC_NET_TCP6", "/host-proc/net/tcp6")
 
 _SKIP_HP_RAW = os.getenv(
     "AUTO_DISCOVER_SKIP_HOST_PORTS",
@@ -70,7 +70,8 @@ APACHE_CONFIG_DIRS = [
 _RE_APACHE_SERVER = re.compile(r"^\s*Server(?:Name|Alias)\s+(\S+)", re.I | re.M)
 _RE_NGINX_SERVER_NAME = re.compile(r"^\s*server_name\s+([^;]+);", re.I | re.M)
 _RE_LISTEN = re.compile(r"^\s*listen\s+(?:\[?[^\]]*\]?:)?(\d+)", re.I | re.M)
-_RE_APACHE_LISTEN = re.compile(r"^\s*Listen\s+(\d+)", re.I | re.M)
+_RE_VHOST_OPEN = re.compile(r"<VirtualHost\s+([^>]+)>", re.I)
+_RE_VHOST_CLOSE = re.compile(r"</VirtualHost\s*>", re.I)
 
 
 def _run_cmd(cmd: List[str], timeout: int = 10) -> Optional[str]:
@@ -84,7 +85,6 @@ def _run_cmd(cmd: List[str], timeout: int = 10) -> Optional[str]:
 
 
 def _ipv4_from_hex(ip_hex: str) -> str:
-    """Decode /proc/net/tcp local_address IP field (little-endian hex)."""
     h = ip_hex.strip()
     if len(h) != 8:
         return ""
@@ -95,11 +95,6 @@ def _ipv4_from_hex(ip_hex: str) -> str:
 
 
 def _parse_listen_ports_from_proc(path: str) -> List[int]:
-    """
-    Parse Linux ``/proc/net/tcp`` (or mounted ``.../host-proc/net/tcp``).
-
-    Returns listening TCP port numbers (IPv4). Skips loopback-only rows.
-    """
     out: List[int] = []
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -112,7 +107,7 @@ def _parse_listen_ports_from_proc(path: str) -> List[int]:
         if len(parts) < 4:
             continue
         local_addr, st = parts[1], parts[3]
-        if st != "0A":  # TCP_LISTEN
+        if st != "0A":
             continue
         if ":" not in local_addr:
             continue
@@ -131,11 +126,6 @@ def _parse_listen_ports_from_proc(path: str) -> List[int]:
 
 
 def scan_listening_ports() -> List[Dict]:
-    """
-    Prefer host ``/proc/net/tcp`` (via mount) so we see the host namespace, not the container's.
-
-    Fallback: ``ss`` / ``netstat`` inside the container (best-effort on hosts without proc mount).
-    """
     if not VPS_SCAN_ENABLED:
         return []
 
@@ -240,56 +230,109 @@ def _expand_server_names(blob: str) -> List[str]:
     return hosts
 
 
+def _iter_nginx_server_blocks(content: str):
+    """Yield inner text of each top-level ``server { ... }`` block (brace-balanced)."""
+    idx = 0
+    n = len(content)
+    while idx < n:
+        m = re.search(r"\bserver\s*\{", content[idx:], re.I)
+        if not m:
+            break
+        brace_open = idx + m.end() - 1
+        depth = 0
+        i = brace_open
+        while i < n:
+            ch = content[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    yield content[brace_open + 1 : i]
+                    idx = i + 1
+                    break
+            i += 1
+        else:
+            break
+
+
+def nginx_hosts_by_port_from_content(content: str) -> Dict[int, List[str]]:
+    """Parse Nginx config text: map listen port → server_name entries from each ``server`` block."""
+    acc: Dict[int, List[str]] = defaultdict(list)
+    for block in _iter_nginx_server_blocks(content):
+        listens = [int(x) for x in _RE_LISTEN.findall(block)]
+        if not listens:
+            listens = [80]
+        names: List[str] = []
+        for match in _RE_NGINX_SERVER_NAME.findall(block):
+            names.extend(_expand_server_names(match))
+        if not names:
+            continue
+        for lp in listens:
+            acc[lp].extend(names)
+    return dict(acc)
+
+
+def apache_hosts_by_port_from_content(content: str) -> Dict[int, List[str]]:
+    """Parse Apache config text: map VirtualHost port → ServerName / ServerAlias."""
+    acc: Dict[int, List[str]] = defaultdict(list)
+    pos = 0
+    cl = content.lower()
+    while pos < len(content):
+        m = _RE_VHOST_OPEN.search(content, pos)
+        if not m:
+            break
+        inner_start = m.end()
+        spec = m.group(1).strip()
+        pm = re.search(r":(\d+)", spec)
+        port = int(pm.group(1)) if pm else 80
+        close_m = _RE_VHOST_CLOSE.search(content, inner_start)
+        if not close_m:
+            break
+        body = content[inner_start : close_m.start()]
+        names: List[str] = []
+        for sn in _RE_APACHE_SERVER.findall(body):
+            names.extend(_expand_server_names(sn))
+        if names:
+            acc[port].extend(names)
+        pos = close_m.end()
+    return dict(acc)
+
+
 def parse_nginx_vhosts() -> Dict[int, List[str]]:
-    result: Dict[int, List[str]] = {}
+    merged: Dict[int, List[str]] = defaultdict(list)
     files = _find_files(NGINX_CONFIG_DIRS, (".conf",))
     for path in files:
-        content = _read_file(path)
-        if not content:
+        raw = _read_file(path)
+        if not raw:
             continue
-        listens = [int(m) for m in _RE_LISTEN.findall(content)]
-        for match in _RE_NGINX_SERVER_NAME.findall(content):
-            hosts = _expand_server_names(match)
-            if not hosts:
-                continue
-            port = listens[0] if listens else 80
-            result.setdefault(port, []).extend(hosts)
-    return result
+        for port, hosts in nginx_hosts_by_port_from_content(raw).items():
+            merged[port].extend(hosts)
+    return dict(merged)
 
 
 def parse_apache_vhosts() -> Dict[int, List[str]]:
-    result: Dict[int, List[str]] = {}
+    merged: Dict[int, List[str]] = defaultdict(list)
     files = _find_files(APACHE_CONFIG_DIRS, (".conf",))
     for path in files:
-        content = _read_file(path)
-        if not content:
+        raw = _read_file(path)
+        if not raw:
             continue
-        listens_ap = [int(m) for m in _RE_APACHE_LISTEN.findall(content)]
-        listens_ngx = [int(m) for m in _RE_LISTEN.findall(content)]
-        listens = listens_ap + listens_ngx
-        for match in _RE_APACHE_SERVER.findall(content):
-            hosts = _expand_server_names(match)
-            if not hosts:
-                continue
-            port = listens[0] if listens else 80
-            result.setdefault(port, []).extend(hosts)
-    return result
+        for port, hosts in apache_hosts_by_port_from_content(raw).items():
+            merged[port].extend(hosts)
+    return dict(merged)
 
 
 def discover_vps_deployments(docker_host_ports: Set[int]) -> List[Dict]:
-    """
-    Host listeners + vhost names → deployment rows. Skips ports already covered by Docker discovery.
-    Only creates rows for ports that are actually listening (from proc or ss).
-    """
     if not VPS_SCAN_ENABLED:
         return []
 
     nginx_vhosts = parse_nginx_vhosts()
     apache_vhosts = parse_apache_vhosts()
-    all_vhosts: Dict[int, List[str]] = {}
+    all_vhosts: Dict[int, List[str]] = defaultdict(list)
     for src in (nginx_vhosts, apache_vhosts):
         for port, hosts in src.items():
-            all_vhosts.setdefault(port, []).extend(hosts)
+            all_vhosts[port].extend(hosts)
 
     for port in list(all_vhosts.keys()):
         seen_h: Set[str] = set()

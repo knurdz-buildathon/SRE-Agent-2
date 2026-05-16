@@ -9,7 +9,9 @@ export default function DeploymentCard({ deployment }) {
   const statusColor =
     status === 'up' || status === 'healthy'
       ? 'border-l-healthy'
-      : 'border-l-unhealthy';
+      : status === 'down' || status === 'unhealthy'
+        ? 'border-l-unhealthy'
+        : 'border-l-gray-600';
 
   return (
     <div

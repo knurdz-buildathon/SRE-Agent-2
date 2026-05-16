@@ -45,6 +45,7 @@ async def test_overview_endpoint(api_client):
     assert "total_deployments" in data
     assert "up_count" in data
     assert "down_count" in data
+    assert "unknown_count" in data
     assert "open_incidents" in data
     assert "deployments" in data
     assert isinstance(data["deployments"], list)

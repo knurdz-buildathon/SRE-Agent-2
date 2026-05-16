@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import os
+import re
+import ssl
 import time
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Set
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -18,7 +20,17 @@ HTTP_PROBE_USER_AGENT = os.getenv(
 )
 HTTP_TRY_HTTPS_FALLBACK = os.getenv("HTTP_TRY_HTTPS_FALLBACK", "true").lower() == "true"
 
-# When the configured URL path is "/" (or empty), also try these paths on the same origin.
+PROBE_HOST = os.getenv("PROBE_HOST", "host.docker.internal").strip().lower()
+_EXTRA_GATEWAY = os.getenv("HTTP_PROBE_GATEWAY_HOSTS", "").strip().lower()
+GATEWAY_TCP_HOSTS: Set[str] = {PROBE_HOST}
+for part in _EXTRA_GATEWAY.split(","):
+    p = part.strip().lower()
+    if p:
+        GATEWAY_TCP_HOSTS.add(p)
+
+# Connect to gateway (:host.docker.internal) but use TLS SNI + Host for the real vhost (curl --resolve)
+HTTP_PROBE_GATEWAY_SNI = os.getenv("HTTP_PROBE_GATEWAY_SNI", "true").lower() == "true"
+
 HTTP_PROBE_TRY_FALLBACK_PATHS = os.getenv("HTTP_PROBE_TRY_FALLBACK_PATHS", "true").lower() == "true"
 _RAW_FALLBACK_PATHS = os.getenv(
     "HTTP_PROBE_FALLBACK_PATHS",
@@ -43,7 +55,6 @@ def _url_replace_path(base_url: str, path: str) -> str:
 
 
 def _expand_probe_candidates(primary_url: str) -> List[str]:
-    """Keep explicit non-root URLs as a single candidate; otherwise try common health paths."""
     if not primary_url:
         return []
     candidates = [primary_url]
@@ -67,7 +78,165 @@ def _expand_probe_candidates(primary_url: str) -> List[str]:
     return candidates
 
 
+def _is_gateway_tcp_hostname(hostname: Optional[str]) -> bool:
+    if not hostname:
+        return False
+    return hostname.strip().lower() in GATEWAY_TCP_HOSTS
+
+
+def _ssl_context_for_probe(sni_hostname: str) -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    if not HTTP_VERIFY_SSL:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    else:
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
+    return ctx
+
+
+def _parse_status_from_response_bytes(header_blob: bytes) -> Optional[int]:
+    try:
+        line = header_blob.split(b"\r\n", 1)[0].decode("ascii", errors="replace")
+    except Exception:
+        return None
+    m = re.match(r"HTTP/\d\.\d\s+(\d{3})", line)
+    if not m:
+        return None
+    return int(m.group(1))
+
+
+async def _https_get_via_gateway_with_sni(
+    url: str,
+    tcp_hostname: str,
+    tcp_port: int,
+    sni_hostname: str,
+) -> Dict:
+    """TLS to gateway IP/host with SNI + Host set to the real HTTPS vhost."""
+    parsed = urlparse(url)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+
+    ssl_ctx = _ssl_context_for_probe(sni_hostname)
+    start = time.monotonic()
+    reader = None
+    writer = None
+    try:
+        connect_timeout = min(HTTP_TIMEOUT, 60.0)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(
+                tcp_hostname,
+                tcp_port,
+                ssl=ssl_ctx,
+                server_hostname=sni_hostname,
+                ssl_handshake_timeout=connect_timeout,
+            ),
+            timeout=connect_timeout,
+        )
+        req_lines = [
+            f"GET {path} HTTP/1.1\r\n",
+            f"Host: {sni_hostname}\r\n",
+            f"User-Agent: {HTTP_PROBE_USER_AGENT}\r\n",
+            "Accept: */*\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+        ]
+        payload = "".join(req_lines).encode("ascii", errors="replace")
+        writer.write(payload)
+        await writer.drain()
+
+        buf = b""
+        read_deadline = min(HTTP_TIMEOUT, 60.0)
+        while b"\r\n\r\n" not in buf and len(buf) < 262144:
+            chunk = await asyncio.wait_for(reader.read(16384), timeout=read_deadline)
+            if not chunk:
+                break
+            buf += chunk
+
+        elapsed_ms = (time.monotonic() - start) * 1000
+        status_code = _parse_status_from_response_bytes(buf)
+        if status_code is None:
+            return {
+                "success": False,
+                "status_code": None,
+                "response_time_ms": round(elapsed_ms, 2),
+                "error_message": "Invalid or empty HTTP response (gateway SNI probe)",
+            }
+
+        ok = _success_from_response(status_code)
+        logger.debug(
+            "SNI probe tcp=%s:%s sni=%s path=%s → %s (%.0fms) ok=%s",
+            tcp_hostname,
+            tcp_port,
+            sni_hostname,
+            path,
+            status_code,
+            elapsed_ms,
+            ok,
+        )
+        return {
+            "success": ok,
+            "status_code": status_code,
+            "response_time_ms": round(elapsed_ms, 2),
+            "error_message": None,
+        }
+    except asyncio.TimeoutError:
+        return {
+            "success": False,
+            "status_code": None,
+            "response_time_ms": HTTP_TIMEOUT * 1000,
+            "error_message": "Timeout",
+        }
+    except ssl.SSLError as e:
+        logger.debug("SNI probe SSLError: %s", str(e)[:120])
+        return {
+            "success": False,
+            "status_code": None,
+            "response_time_ms": None,
+            "error_message": f"TLS error: {str(e)[:120]}",
+        }
+    except OSError as e:
+        logger.debug("SNI probe OSError: %s", str(e)[:120])
+        return {
+            "success": False,
+            "status_code": None,
+            "response_time_ms": None,
+            "error_message": f"Connection error: {str(e)[:120]}",
+        }
+    except Exception as e:
+        logger.debug("SNI probe Exception: %s", str(e)[:120])
+        return {
+            "success": False,
+            "status_code": None,
+            "response_time_ms": None,
+            "error_message": str(e)[:200],
+        }
+    finally:
+        if writer is not None:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
 async def _http_get_once(url: str, host_header: Optional[str]) -> Dict:
+    parsed = urlparse(url)
+
+    # HTTPS via host-gateway: SNI must match the real vhost (Host header alone is insufficient).
+    if (
+        HTTP_PROBE_GATEWAY_SNI
+        and parsed.scheme == "https"
+        and host_header
+        and str(host_header).strip()
+        and _is_gateway_tcp_hostname(parsed.hostname)
+    ):
+        sni = str(host_header).strip()
+        tcp_h = parsed.hostname or PROBE_HOST
+        tcp_p = parsed.port or 443
+        return await _https_get_via_gateway_with_sni(url, tcp_h, tcp_p, sni)
+
     headers = {"User-Agent": HTTP_PROBE_USER_AGENT, "Accept": "*/*"}
     if host_header and str(host_header).strip():
         headers["Host"] = str(host_header).strip()
@@ -132,7 +301,6 @@ async def _http_get_once(url: str, host_header: Optional[str]) -> Dict:
 
 
 async def _probe_one_url_with_https_fallback(url: str, host_header: Optional[str]) -> Dict:
-    """GET one URL; if plain HTTP fails at TLS/connection level, retry as HTTPS."""
     primary = await _http_get_once(url, host_header)
     if primary.get("success"):
         return primary
@@ -173,8 +341,10 @@ async def http_health_check(url: str, host_header: Optional[str] = None) -> Dict
     """
     GET health URL with optional Host header.
 
-    For URLs whose path is ``/`` (or empty), tries ``HTTP_PROBE_FALLBACK_PATHS`` on the same origin
-    until one succeeds — fixes auto-discovery using ``/`` when the app only serves ``/health``.
+    For HTTPS URLs targeting ``PROBE_HOST`` with a probe Host/SNI name, uses TLS SNI to the vhost
+    while connecting to the gateway (same idea as ``curl --resolve``).
+
+    For URLs whose path is ``/``, tries ``HTTP_PROBE_FALLBACK_PATHS`` on the same origin.
     """
     if not url:
         return {

@@ -42,7 +42,7 @@ export default function OverviewPage() {
       </div>
 
       {/* Summary metrics */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         <MetricCard
           title="Total Deployments"
           value={data.total_deployments}
@@ -57,6 +57,11 @@ export default function OverviewPage() {
           title="Down"
           value={data.down_count}
           color="text-unhealthy"
+        />
+        <MetricCard
+          title="Pending"
+          value={data.unknown_count ?? 0}
+          color="text-muted"
         />
         <MetricCard
           title="Open Incidents"

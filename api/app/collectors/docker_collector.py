@@ -159,6 +159,9 @@ def extract_tcp_host_bindings(attrs: dict) -> List[Tuple[int, int]]:
             hp = b.get("HostPort")
             if not hp:
                 continue
+            hip_raw = (b.get("HostIp") or "").strip()
+            if hip_raw in ("127.0.0.1", "::1"):
+                continue
             hp_int = int(hp)
             if hp_int not in AUTO_DISCOVER_SKIP_HOST_PORTS:
                 out.append((hp_int, cport))

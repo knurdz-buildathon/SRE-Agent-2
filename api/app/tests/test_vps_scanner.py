@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 
 from app.collectors import vps_scanner as vs
+from app.collectors.vps_scanner import apache_hosts_by_port_from_content, nginx_hosts_by_port_from_content
 
 
 def test_ipv4_hex_decode():
@@ -26,6 +27,36 @@ def test_parse_proc_tcp_listen_ports_skips_loopback():
         assert ports.count(80) == 1
     finally:
         Path(path).unlink(missing_ok=True)
+
+
+def test_nginx_server_blocks_map_listen_ports():
+    cfg = """
+    server {
+        listen 80;
+        server_name a.example.com;
+    }
+    server {
+        listen 443 ssl;
+        server_name b.example.com www.b.example.com;
+    }
+    """
+    m = nginx_hosts_by_port_from_content(cfg)
+    assert m[80] == ["a.example.com"]
+    assert m[443][:2] == ["b.example.com", "www.b.example.com"]
+
+
+def test_apache_virtualhost_block_ports():
+    cfg = """
+    <VirtualHost *:80>
+        ServerName c.example.com
+    </VirtualHost>
+    <VirtualHost *:443>
+        ServerAlias d.example.com
+    </VirtualHost>
+    """
+    m = apache_hosts_by_port_from_content(cfg)
+    assert m[80] == ["c.example.com"]
+    assert m[443] == ["d.example.com"]
 
 
 def test_expand_server_names_splits_and_skips_wildcards():

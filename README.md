@@ -54,13 +54,14 @@ Containers already labeled are **not** duplicated by auto-scan.
 
 - Compose sets **`extra_hosts: ["host.docker.internal:host-gateway"]`** so Linux can reach the host’s published ports.
 - Tune **`AUTO_DISCOVER_SKIP_HOST_PORTS`** for DB/cache ports you publish (`3306`, `6379`, …).
+- **`127.0.0.1`-only publishes** — bindings like `127.0.0.1:8080:80` are skipped (both Docker ``Ports`` and ``PortBindings``): the browser on the host may work but **`host.docker.internal`** from the agent container cannot reach loopback-only sockets. Publish **`0.0.0.0`** or use **`sre.health_url`** to a URL the agent can reach.
 - **Internal-only** services (no host bind): if **`sre-agent-api`** joins the **same user-defined network** as your app, the agent probes `http://<container-dns>:<exposed-port>/`.
 
 For overrides per site, **`sre.health_url` / `sre.browser_url`** on labeled stacks still apply (**URLs must work from inside `sre-agent-api`** — public HTTPS through Traefik, or shared Docker DNS).
 
 **Sites show “down” but work in a browser**
 
-Auto-discovery probes **`host.docker.internal:<port>`** without the browser’s hostname. Reverse proxies (Traefik, Nginx) often route by **`Host`**, so the agent sets it automatically when it finds **`traefik.http.routers.*.rule`** with **`Host(\`your.domain\`)`**, **`sre.probe_host`**, or a match from **VPS Nginx/Apache vhost parsing**. If TLS terminates on the edge and plain HTTP fails, **`HTTP_TRY_HTTPS_FALLBACK=true`** (default) retries HTTPS. Default **`HTTP_AVAILABILITY_MODE=reachable`** treats **any HTTP status** as **up** (timeouts and connection failures still **down**). Use **`strict`** only if you want **2xx–3xx** required. **`HTTP_VERIFY_SSL=false`** only if you accept MITM risk for self-signed certs inside the agent.
+Auto-discovery probes **`host.docker.internal:<port>`** without the browser’s hostname. Reverse proxies (Traefik, Nginx) often route by **`Host`**, so the agent sets it automatically when it finds **`traefik.http.routers.*.rule`** with **`Host(\`your.domain\`)`**, **`sre.probe_host`**, or a match from **VPS Nginx/Apache vhost parsing**. For **HTTPS** through the gateway, probes use **TLS SNI** equal to that hostname (like **`curl --resolve`**) so certificate + vhost selection match the real site. If TLS terminates on the edge and plain HTTP fails, **`HTTP_TRY_HTTPS_FALLBACK=true`** (default) retries HTTPS. Default **`HTTP_AVAILABILITY_MODE=reachable`** treats **any HTTP status** as **up** (timeouts and connection failures still **down**). Use **`strict`** only if you want **2xx–3xx** required. **`HTTP_VERIFY_SSL=false`** only if you accept MITM risk for self-signed certs inside the agent.
 
 **Wrong probe URL (common with auto-discovery)** Auto-discovery uses **`/`** unless you set **`sre.health_path`** on the service (e.g. `/health`). Independently, **`HTTP_PROBE_FALLBACK_PATHS`** tries extra paths on the **same origin** when the configured URL’s path is **`/`** — useful if the app exposes **`/health`** but not **`/`**.
 
@@ -84,6 +85,29 @@ docker compose --profile demo up -d --build
 When **`DEMO_MODE=true`** in `.env`, the API seeds demo deployments and synthetic metrics instead of relying solely on Docker discovery, and the dashboard may show placeholder infrastructure when the socket is unavailable.
 
 ## Monitoring Your Own Services
+
+### Recommended: explicit labels for real domains
+
+For sites behind HTTPS virtual hosts or Traefik, **prefer full URLs** so probes match what users hit (TLS + path). The agent still tunnels through `host.docker.internal` when needed and uses **SNI** for gateway HTTPS checks.
+
+```yaml
+labels:
+  sre.monitor: "true"
+  sre.slug: "my-app"
+  sre.health_url: "https://actual-domain.com/health"
+  sre.browser_url: "https://actual-domain.com"
+```
+
+### Auto-discovery only (published ports)
+
+If the service is picked up by port scanning without `sre.monitor`, set the health **path** so probes do not stick to `/` alone:
+
+```yaml
+labels:
+  sre.health_path: "/health"
+```
+
+### Full labeled example
 
 Add these Docker labels to any container in your `docker-compose.yml`:
 
@@ -175,7 +199,7 @@ Incidents are **deduplicated** by deployment + category + fingerprint. If an iss
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/overview` | Total deployments, up/down counts, open incidents |
+| GET | `/api/overview` | Total deployments, up/down/**pending** counts, open incidents |
 | GET | `/api/deployments/{id}/health?limit=50` | Health check history |
 | GET | `/api/deployments/{id}/errors` | Failed health checks |
 | GET | `/api/deployments/{id}/stats?hours=24` | Resource usage metrics |
@@ -191,7 +215,7 @@ Incidents are **deduplicated** by deployment + category + fingerprint. If an iss
 
 ## Dashboard Pages
 
-1. **Overview** — Total deployments, up/down counts, open incidents, deployment cards with status and uptime
+1. **Overview** — Total deployments, up/down/**pending** counts, open incidents, deployment cards with status and uptime
 2. **Deployment Detail** — Health checks, errors, resource charts (CPU/memory), uptime bar chart, env issues, user errors
 3. **Incidents** — Filterable incident list with severity badges, suggested fixes, click for timeline detail
 4. **Infrastructure** — VPS info, Docker disk usage, CPU/memory bars per deployment, container list
@@ -333,4 +357,7 @@ sre-agent/
 | `HTTP_VERIFY_SSL` | `true` | Set `false` for self-signed (reduces assurance) |
 | `HTTP_PROBE_TRY_FALLBACK_PATHS` | `true` | For `/` URLs, try `HTTP_PROBE_FALLBACK_PATHS` on same origin |
 | `HTTP_PROBE_FALLBACK_PATHS` | see `.env.example` | Comma-separated paths (e.g. `/health,/healthz,...`) |
+| `HTTP_PROBE_GATEWAY_SNI` | `true` | HTTPS to `PROBE_HOST` uses TLS SNI from probe hostname (`curl --resolve` behavior) |
+| `HTTP_PROBE_GATEWAY_HOSTS` | _(empty)_ | Extra comma-separated hostnames treated as gateway TCP targets for SNI logic |
+| `HEALTH_DOWN_AFTER_FAILURES` | `3` | Consecutive failed HTTP checks before status becomes **down** |
 

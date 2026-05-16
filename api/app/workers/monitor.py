@@ -38,6 +38,13 @@ logger = logging.getLogger("sre")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "30"))
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 
+
+def _health_failure_threshold() -> int:
+    try:
+        return max(1, int(os.getenv("HEALTH_DOWN_AFTER_FAILURES", "3")))
+    except ValueError:
+        return 3
+
 scheduler = AsyncIOScheduler()
 
 
@@ -148,11 +155,14 @@ async def sync_deployments():
 async def run_health_checks():
     """Run HTTP health checks for all deployments."""
     deployments = await fetch_all("SELECT * FROM deployments")
+    need_failures = _health_failure_threshold()
 
     for dep in deployments:
         health_url = dep.get("health_url")
         if not health_url:
             continue
+
+        prev_status = dep.get("status") or "unknown"
 
         result = await http_health_check(health_url, _probe_host_header(dep))
 
@@ -169,13 +179,33 @@ async def run_health_checks():
             ),
         )
 
-        new_status = "up" if result.get("success") else "down"
+        if result.get("success"):
+            new_status = "up"
+        else:
+            recent = await fetch_all(
+                """SELECT success FROM health_checks WHERE deployment_id = ? AND check_type = 'http'
+                   ORDER BY checked_at DESC LIMIT ?""",
+                (dep["id"], need_failures),
+            )
+            consec_fail = 0
+            for row in recent:
+                if row["success"]:
+                    break
+                consec_fail += 1
+            if consec_fail >= need_failures:
+                new_status = "down"
+            else:
+                new_status = prev_status
+
         await execute(
             "UPDATE deployments SET status=?, last_check=? WHERE id=?",
             (new_status, datetime.utcnow().isoformat(), dep["id"]),
         )
 
-        await detect_health_incidents(dep["id"], result)
+        if result.get("success"):
+            await detect_health_incidents(dep["id"], result)
+        elif new_status == "down" and prev_status != "down":
+            await detect_health_incidents(dep["id"], result)
 
     logger.info(f"Health checks completed for {len(deployments)} deployments")
 

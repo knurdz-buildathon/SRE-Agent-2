@@ -18,13 +18,29 @@ def _deployment_status(raw: Optional[str]) -> str:
     return raw
 
 
+def _aggregate_bucket(raw: Optional[str]) -> str:
+    """Dashboard totals: only explicit down counts as down; running/unknown/etc. are pending."""
+    s = _deployment_status(raw)
+    if s == "up":
+        return "up"
+    if s == "down":
+        return "down"
+    return "unknown"
+
+
+def _card_display_status(raw: Optional[str]) -> str:
+    """Overview cards: collapse non-terminal probe states to unknown (pending)."""
+    return _aggregate_bucket(raw)
+
+
 @router.get("/overview")
 async def get_overview():
     deployments = await fetch_all("SELECT * FROM deployments")
 
-    norm = [_deployment_status(d.get("status")) for d in deployments]
-    up = sum(1 for s in norm if s == "up")
-    down = sum(1 for s in norm if s != "up")
+    buckets = [_aggregate_bucket(d.get("status")) for d in deployments]
+    up = sum(1 for s in buckets if s == "up")
+    down = sum(1 for s in buckets if s == "down")
+    unknown = sum(1 for s in buckets if s == "unknown")
 
     incident_row = await fetch_one(
         "SELECT COUNT(*) as cnt FROM incidents WHERE status = 'open'"
@@ -58,7 +74,7 @@ async def get_overview():
             "id": dep["id"],
             "slug": dep.get("slug", dep["id"]),
             "environment": dep.get("environment", "production"),
-            "status": _deployment_status(dep.get("status")),
+            "status": _card_display_status(dep.get("status")),
             "uptime_percent": uptime_pct,
             "last_error": last_err["error_message"] if last_err else None,
             "open_incidents": inc_row["cnt"] if inc_row else 0,
@@ -68,6 +84,7 @@ async def get_overview():
         "total_deployments": len(deployments),
         "up_count": up,
         "down_count": down,
+        "unknown_count": unknown,
         "open_incidents": open_incidents,
         "deployments": cards,
     }
