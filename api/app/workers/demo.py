@@ -63,14 +63,15 @@ async def seed_demo_deployments():
                 """INSERT INTO deployments
                     (id, slug, environment, git_url, health_url, browser_url,
                      expected_selector, tcp_checks, probe_host_header, container_id, container_name,
-                     image, status, last_check)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     image, status, source, vhost_names, last_check)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     dep["id"], dep["slug"], dep["environment"], dep["git_url"],
                     dep["health_url"], dep["browser_url"], dep["expected_selector"],
                     dep["tcp_checks"], None,
                     dep["container_id"], dep["container_name"],
-                    dep["image"], dep["status"], datetime.utcnow().isoformat(),
+                    dep["image"], dep["status"], "docker", None,
+                    datetime.utcnow().isoformat(),
                 ),
             )
     logger.info(f"Demo: seeded {len(DEMO_DEPLOYMENTS)} deployments")

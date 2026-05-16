@@ -16,9 +16,9 @@ A Docker-based monitoring agent that discovers Docker Compose websites, continuo
               Docker Socket  Traefik Logs  Playwright
                     │            │            │
               ┌─────┴────┐ ┌────┴─────┐ ┌────┴──────┐
-              │ Container │ │ Access   │ │ Browser   │
-              │ Metrics   │ │ Log      │ │ Checks    │
-              │ Discovery │ │ Parser   │ │           │
+              │ Docker & │ │ Access   │ │ Browser   │
+              │ VPS scan │ │ Log      │ │ Checks    │
+              │ discovery│ │ Parser   │ │           │
               └──────────┘ └──────────┘ └───────────┘
 ```
 
@@ -46,6 +46,7 @@ With **`DEMO_MODE=false`** (set in `docker-compose.yml` and `.env.example`), the
 
 1. **Labeled containers** — **`sre.monitor=true`** (`1`, `yes`, `on` accepted).
 2. **Auto-scan (default `AUTO_DISCOVER_WEB=true`)** — scans **all Docker containers** (except skips); for each **host-published TCP port** (e.g. `8080:80`), probes **`http(s)://host.docker.internal:<published-port>/`** from inside `sre-agent-api`, so **existing Compose-published sites show up without labels**.
+3. **VPS-wide scan (default `VPS_SCAN_ENABLED=true`)** — reads the **host’s** listening ports from **`/host-proc/net/tcp`** (Compose mounts host `/proc` there), skips ports already found by Docker discovery, and parses **Nginx / Apache** configs under **`/host-etc`** for **`server_name`** / **`ServerName`** so probes send the right **`Host`** header. This picks up **native** web servers (not only containers).
 
 Containers already labeled are **not** duplicated by auto-scan.
 
@@ -59,7 +60,11 @@ For overrides per site, **`sre.health_url` / `sre.browser_url`** on labeled stac
 
 **Sites show “down” but work in a browser**
 
-Auto-discovery probes **`host.docker.internal:<port>`** without the browser’s hostname. Reverse proxies (Traefik, Nginx) often route by **`Host`**, so the agent sets it automatically when it finds **`traefik.http.routers.*.rule`** with **`Host(\`your.domain\`)`**, or when you set **`sre.probe_host`** / **`SRE.PROBE_HOST`** on the container. If TLS terminates on the edge and plain HTTP fails, enable **`HTTP_TRY_HTTPS_FALLBACK=true`** (default). For edges that always return **403/401** to probes but are otherwise healthy, set **`HTTP_AVAILABILITY_MODE=reachable`** so any HTTP status counts as **up** (incidents for real outages still use timeouts and connection failures). **`HTTP_VERIFY_SSL=false`** only if you use self-signed certs and accept MITM risk inside the agent.
+Auto-discovery probes **`host.docker.internal:<port>`** without the browser’s hostname. Reverse proxies (Traefik, Nginx) often route by **`Host`**, so the agent sets it automatically when it finds **`traefik.http.routers.*.rule`** with **`Host(\`your.domain\`)`**, **`sre.probe_host`**, or a match from **VPS Nginx/Apache vhost parsing**. If TLS terminates on the edge and plain HTTP fails, **`HTTP_TRY_HTTPS_FALLBACK=true`** (default) retries HTTPS. Default **`HTTP_AVAILABILITY_MODE=reachable`** treats **any HTTP status** as **up** (timeouts and connection failures still **down**). Use **`strict`** only if you want **2xx–3xx** required. **`HTTP_VERIFY_SSL=false`** only if you accept MITM risk for self-signed certs inside the agent.
+
+**VPS scan mounts**
+
+The API service mounts **`/etc`**, **`/proc`**, **`/usr`**, **`/var`** from the host read-only (`/host-etc`, `/host-proc`, …). Disable with **`VPS_SCAN_ENABLED=false`** if you do not want those paths visible inside the container.
 
 - Mount Traefik access logs into **`./traefik-logs`** so **User Errors** come from **live logs**, not samples.
 - If Docker discovery succeeds, deployments **removed from Docker** are **purged from SQLite** (with related checks/incidents). To erase all stored history: `docker compose down -v`.
@@ -247,6 +252,7 @@ sre-agent/
 │       │   └── schemas.py  # Pydantic models
 │       ├── collectors/
 │       │   ├── docker_collector.py
+│       │   ├── vps_scanner.py
 │       │   ├── health_collector.py
 │       │   ├── browser_collector.py
 │       │   └── traefik_parser.py
@@ -317,4 +323,9 @@ sre-agent/
 | `AUTO_DISCOVER_SKIP_HOST_PORTS` | DB/cache defaults | Skip noisy/non-HTTP binds |
 | `AUTO_DISCOVER_ORPHANS` | `false` | List containers with no probe URL |
 | `AUTO_BROWSER_AUTO` | `false` | Run Playwright on auto-discovered URLs |
+| `VPS_SCAN_ENABLED` | `true` | Host `/proc` listeners + Nginx/Apache vhost scan |
+| `HOST_PROC_NET_TCP` | `/host-proc/net/tcp` | Override path to host proc tcp snapshot |
+| `HTTP_AVAILABILITY_MODE` | `reachable` | `reachable` = any HTTP status is up; `strict` = 2xx–3xx |
+| `HTTP_TRY_HTTPS_FALLBACK` | `true` | Retry `http://` probes as `https://` on TLS/conn errors |
+| `HTTP_VERIFY_SSL` | `true` | Set `false` for self-signed (reduces assurance) |
 

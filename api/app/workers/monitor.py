@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime
+from urllib.parse import urlparse
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -12,6 +13,7 @@ from app.collectors.docker_collector import (
     collect_vps_metadata,
     collect_docker_sizes,
 )
+from app.collectors.vps_scanner import discover_vps_deployments
 from app.collectors.health_collector import http_health_check, run_tcp_checks
 from app.collectors.browser_collector import browser_check
 from app.collectors.traefik_parser import (
@@ -75,6 +77,26 @@ async def sync_deployments():
         logger.warning("Docker discovery unavailable; keeping existing deployment rows in SQLite")
         return
 
+    # Collect Docker host-port set so VPS scanner skips ports Docker already covers
+    docker_host_ports: set = set()
+    for dep in deployments:
+        hu = dep.get("health_url") or ""
+        if not hu:
+            continue
+        try:
+            parsed = urlparse(hu)
+            port = parsed.port
+            if port is None and parsed.scheme in ("http", "https"):
+                port = 443 if parsed.scheme == "https" else 80
+            if port:
+                docker_host_ports.add(port)
+        except Exception:
+            pass
+
+    # Merge VPS-scanned deployments (non-Docker listeners + vhost hostnames)
+    vps_deployments = discover_vps_deployments(docker_host_ports)
+    deployments = deployments + vps_deployments
+
     discovered_ids = {d["id"] for d in deployments}
     for dep in deployments:
         existing = await fetch_one("SELECT id FROM deployments WHERE id = ?", (dep["id"],))
@@ -83,14 +105,16 @@ async def sync_deployments():
                 """UPDATE deployments SET
                     slug=?, environment=?, git_url=?, health_url=?, browser_url=?,
                     expected_selector=?, tcp_checks=?, probe_host_header=?, container_id=?, container_name=?,
-                    image=?, status=?, last_check=?
+                    image=?, status=?, source=?, vhost_names=?, last_check=?
                 WHERE id=?""",
                 (
                     dep["slug"], dep["environment"], dep["git_url"], dep["health_url"],
                     dep["browser_url"], dep["expected_selector"], dep["tcp_checks"],
                     dep.get("probe_host_header"),
-                    dep["container_id"], dep["container_name"], dep["image"],
-                    dep["status"], datetime.utcnow().isoformat(), dep["id"],
+                    dep.get("container_id"), dep.get("container_name"), dep.get("image"),
+                    dep["status"], dep.get("source", "docker"),
+                    ",".join(dep.get("vhost_names") or []) if dep.get("vhost_names") else None,
+                    datetime.utcnow().isoformat(), dep["id"],
                 ),
             )
         else:
@@ -98,23 +122,26 @@ async def sync_deployments():
                 """INSERT INTO deployments
                     (id, slug, environment, git_url, health_url, browser_url,
                      expected_selector, tcp_checks, probe_host_header, container_id, container_name,
-                     image, status, last_check)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     image, status, source, vhost_names, last_check)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     dep["id"], dep["slug"], dep["environment"], dep["git_url"],
                     dep["health_url"], dep["browser_url"], dep["expected_selector"],
                     dep["tcp_checks"], dep.get("probe_host_header"),
-                    dep["container_id"], dep["container_name"],
-                    dep["image"], dep["status"], datetime.utcnow().isoformat(),
+                    dep.get("container_id"), dep.get("container_name"),
+                    dep.get("image"), dep["status"],
+                    dep.get("source", "docker"),
+                    ",".join(dep.get("vhost_names") or []) if dep.get("vhost_names") else None,
+                    datetime.utcnow().isoformat(),
                 ),
             )
-    logger.info(f"Synced {len(deployments)} deployment(s) from Docker (labels + auto-scan)")
+    logger.info(f"Synced {len(deployments)} deployment(s) (Docker labels + auto-scan + VPS scan)")
 
-    # Remove SQLite rows for containers that no longer have sre.monitor / were removed
+    # Remove SQLite rows no longer returned by discovery (Docker + VPS scan)
     stored = await fetch_all("SELECT id FROM deployments")
     for row in stored:
         if row["id"] not in discovered_ids:
-            logger.info(f"Purging stale deployment no longer in Docker inventory: {row['id']}")
+            logger.info(f"Purging stale deployment no longer in inventory: {row['id']}")
             await purge_deployment_from_db(row["id"])
 
 

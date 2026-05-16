@@ -11,6 +11,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - sre-data:/data
       - ./traefik-logs:/traefik-logs:ro
+      # VPS scan: read-only host mounts for ss/netstat, Nginx/Apache config parsing
+      - /etc:/host-etc:ro
+      - /proc:/host-proc:ro
+      - /usr:/host-usr:ro
+      - /var:/host-var:ro
     environment:
       - DATABASE_PATH=/data/sre.db
       - TRAEFIK_LOG_DIR=/traefik-logs
@@ -23,6 +28,9 @@ services:
       - PROBE_HOST=host.docker.internal
       - SRE_AGENT_CONTAINER_NAME=sre-agent-api
       - AUTO_DISCOVER_SKIP_CONTAINERS=sre-agent-api,sre-agent-web
+      - VPS_SCAN_ENABLED=true
+      - HTTP_AVAILABILITY_MODE=reachable
+      - HTTP_TRY_HTTPS_FALLBACK=true
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

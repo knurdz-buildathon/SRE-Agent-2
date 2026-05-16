@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS deployments (
     status TEXT DEFAULT 'unknown',
     last_check TEXT,
     probe_host_header TEXT,
+    source TEXT DEFAULT 'docker',
+    vhost_names TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -188,6 +190,12 @@ async def migrate_deployments_schema(db: aiosqlite.Connection):
     if "probe_host_header" not in colnames:
         await db.execute("ALTER TABLE deployments ADD COLUMN probe_host_header TEXT")
         logger.info("Migration: deployments.probe_host_header added")
+    if "source" not in colnames:
+        await db.execute("ALTER TABLE deployments ADD COLUMN source TEXT DEFAULT 'docker'")
+        logger.info("Migration: deployments.source added")
+    if "vhost_names" not in colnames:
+        await db.execute("ALTER TABLE deployments ADD COLUMN vhost_names TEXT")
+        logger.info("Migration: deployments.vhost_names added")
 
 
 async def execute(query: str, params=(), commit: bool = True):

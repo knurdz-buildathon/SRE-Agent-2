@@ -264,6 +264,7 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
                     "container_name": name,
                     "image": image_short,
                     "status": "running" if running else "stopped",
+                    "source": "docker",
                 }
             )
             rows_emitted += 1
@@ -299,6 +300,7 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
                         "container_name": name,
                         "image": image_short,
                         "status": "running",
+                        "source": "docker",
                     }
                 )
                 continue
@@ -323,6 +325,7 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
                 "container_name": name,
                 "image": image_short,
                 "status": "running" if running else "stopped",
+                "source": "docker",
             }
         )
 
@@ -372,6 +375,7 @@ def discover_deployments() -> Tuple[List[Dict], bool]:
                     if container.image.tags
                     else str(container.image.id[:12]),
                     "status": "running" if container.status == "running" else "stopped",
+                    "source": "docker",
                 }
             )
             labeled_ids.add(container.id)
