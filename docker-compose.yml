@@ -19,6 +19,12 @@ services:
       - DASHBOARD_USER=admin
       - DASHBOARD_PASS=admin
       - DEMO_MODE=false
+      - AUTO_DISCOVER_WEB=true
+      - PROBE_HOST=host.docker.internal
+      - SRE_AGENT_CONTAINER_NAME=sre-agent-api
+      - AUTO_DISCOVER_SKIP_CONTAINERS=sre-agent-api,sre-agent-web
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
 

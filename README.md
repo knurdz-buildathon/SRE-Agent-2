@@ -42,13 +42,25 @@ The dashboard opens at **http://localhost:3000**. The API is at **http://localho
 
 ## Production monitoring (default)
 
-With **`DEMO_MODE=false`** (set in `docker-compose.yml` and `.env.example`), the agent **does not seed fake deployments**. It **discovers real containers** on the VPS whose Docker labels include **`sre.monitor=true`** (`1`, `yes`, `on` are also accepted).
+With **`DEMO_MODE=false`** (set in `docker-compose.yml` and `.env.example`), the agent **does not seed fake deployments**. Discovery merges:
 
-- **`sre.health_url` / `sre.browser_url`** must work **from inside the `sre-agent-api` container**. Easiest on a VPS: use **real HTTPS URLs** (e.g. `https://yourdomain.com/health`) so Traefik/nginx terminates TLS as usual. Alternatively, attach **`sre-agent-api` to the same Docker network(s)** as your apps and use `http://service_name:port/...`.
+1. **Labeled containers** — **`sre.monitor=true`** (`1`, `yes`, `on` accepted).
+2. **Auto-scan (default `AUTO_DISCOVER_WEB=true`)** — scans **all Docker containers** (except skips); for each **host-published TCP port** (e.g. `8080:80`), probes **`http(s)://host.docker.internal:<published-port>/`** from inside `sre-agent-api`, so **existing Compose-published sites show up without labels**.
+
+Containers already labeled are **not** duplicated by auto-scan.
+
+**Auto-scan VPS notes**
+
+- Compose sets **`extra_hosts: ["host.docker.internal:host-gateway"]`** so Linux can reach the host’s published ports.
+- Tune **`AUTO_DISCOVER_SKIP_HOST_PORTS`** for DB/cache ports you publish (`3306`, `6379`, …).
+- **Internal-only** services (no host bind): if **`sre-agent-api`** joins the **same user-defined network** as your app, the agent probes `http://<container-dns>:<exposed-port>/`.
+
+For overrides per site, **`sre.health_url` / `sre.browser_url`** on labeled stacks still apply (**URLs must work from inside `sre-agent-api`** — public HTTPS through Traefik, or shared Docker DNS).
+
 - Mount Traefik access logs into **`./traefik-logs`** so **User Errors** come from **live logs**, not samples.
-- If Docker discovery succeeds, deployments **removed from Docker or stripped of labels** are **purged from SQLite** (with related checks/incidents). To erase all stored history: `docker compose down -v`.
+- If Docker discovery succeeds, deployments **removed from Docker** are **purged from SQLite** (with related checks/incidents). To erase all stored history: `docker compose down -v`.
 
-Remove **`sre.monitor`** from your monitoring stack itself unless you want the agent listed as a deployment.
+You normally **do not need labels** for stacks that already **publish** HTTP ports on the host; add **`sre.monitor`** only when you want custom health/browser URLs or selectors.
 
 ## Demo mode & sample containers
 
@@ -294,4 +306,10 @@ sre-agent/
 | `DASHBOARD_USER` | `admin` | Basic auth username |
 | `DASHBOARD_PASS` | `admin` | Basic auth password |
 | `DEMO_MODE` | `false` | Demo seeds & synthetic infra fallback (enable only for local demos) |
-| `AUTH_ENABLED` | `true` | Enable basic auth |
+| `AUTO_DISCOVER_WEB` | `true` | Scan Docker for published ports → deployments without labels |
+| `PROBE_HOST` | `host.docker.internal` | Host used to reach published ports from the agent container |
+| `AUTO_DISCOVER_SKIP_CONTAINERS` | see `.env.example` | Comma names skipped by auto-scan |
+| `AUTO_DISCOVER_SKIP_HOST_PORTS` | DB/cache defaults | Skip noisy/non-HTTP binds |
+| `AUTO_DISCOVER_ORPHANS` | `false` | List containers with no probe URL |
+| `AUTO_BROWSER_AUTO` | `false` | Run Playwright on auto-discovered URLs |
+

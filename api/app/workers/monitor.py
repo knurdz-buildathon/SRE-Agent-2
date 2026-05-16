@@ -98,7 +98,7 @@ async def sync_deployments():
                     dep["image"], dep["status"], datetime.utcnow().isoformat(),
                 ),
             )
-    logger.info(f"Synced {len(deployments)} deployment(s) from Docker labels")
+    logger.info(f"Synced {len(deployments)} deployment(s) from Docker (labels + auto-scan)")
 
     # Remove SQLite rows for containers that no longer have sre.monitor / were removed
     stored = await fetch_all("SELECT id FROM deployments")
