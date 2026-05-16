@@ -8,7 +8,7 @@ A Docker-based monitoring agent that discovers Docker Compose websites, continuo
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────┐
 │  sre-agent-web  │────▶│  sre-agent-api   │────▶│  SQLite DB  │
 │  React + Tailwind│     │  FastAPI + Workers│     │  (volume)   │
-│  :3111           │     │  :8000           │     │             │
+│  :3000           │     │  :8000           │     │             │
 └─────────────────┘     └────────┬─────────┘     └─────────────┘
                                  │
                     ┌────────────┼────────────┐
@@ -35,10 +35,10 @@ cp .env.example .env
 docker compose up --build -d
 
 # Open the dashboard
-open http://localhost:3111
+open http://localhost:3000
 ```
 
-The dashboard opens at **http://localhost:3111**. The API is at **http://localhost:8777**.
+The dashboard opens at **http://localhost:3000**. The API is at **http://localhost:8000**.
 
 ## Demo Mode
 

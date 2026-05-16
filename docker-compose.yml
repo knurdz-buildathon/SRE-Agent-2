@@ -24,7 +24,7 @@ services:
       sre.slug: "sre-agent-api"
       sre.environment: "production"
     ports:
-      - "8777:8000"
+      - "8000:8000"
 
   sre-agent-web:
     build:
@@ -33,7 +33,7 @@ services:
     container_name: sre-agent-web
     restart: unless-stopped
     ports:
-      - "3111:80"
+      - "3000:80"
     depends_on:
       - sre-agent-api
 
