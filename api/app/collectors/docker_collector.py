@@ -4,6 +4,7 @@ import os
 import re
 from typing import List, Dict, Optional, Tuple, Set
 
+from app.collectors.host_metrics import collect_vps_metrics
 from app.collectors.path_probe import normalize_path, select_health_url
 
 logger = logging.getLogger("sre")
@@ -468,51 +469,7 @@ def collect_container_metrics(container_id: str) -> Optional[Dict]:
 
 
 def collect_vps_metadata() -> Dict:
-    import platform
-    import subprocess
-
-    result = {
-        "os_name": f"{platform.system()} {platform.release()}",
-        "kernel": platform.version(),
-        "docker_version": "unknown",
-        "cpu_count": os.cpu_count() or 0,
-        "memory_total_mb": 0,
-        "disk_total_gb": 0,
-        "disk_used_gb": 0,
-    }
-
-    # Docker version
-    client = get_docker_client()
-    if client:
-        try:
-            ver = client.version()
-            result["docker_version"] = ver.get("Version", "unknown")
-        except Exception:
-            pass
-
-    # Memory
-    try:
-        with open("/proc/meminfo", "r") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    result["memory_total_mb"] = round(
-                        int(line.split()[1]) / 1024, 2
-                    )
-                    break
-    except Exception:
-        pass
-
-    # Disk
-    try:
-        stat = os.statvfs("/")
-        total = stat.f_blocks * stat.f_frsize
-        used = (stat.f_blocks - stat.f_bfree) * stat.f_frsize
-        result["disk_total_gb"] = round(total / (1024 ** 3), 2)
-        result["disk_used_gb"] = round(used / (1024 ** 3), 2)
-    except Exception:
-        pass
-
-    return result
+    return collect_vps_metrics(get_docker_client)
 
 
 def collect_docker_sizes() -> Dict:

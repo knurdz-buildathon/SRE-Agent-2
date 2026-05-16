@@ -4,6 +4,14 @@ import StatusBadge from '../components/StatusBadge';
 import MetricCard from '../components/MetricCard';
 import ResourceChart from '../components/ResourceChart';
 
+function formatUptime(seconds) {
+  if (!seconds) return '-';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days > 0) return `${days}d ${hours}h`;
+  return `${hours}h`;
+}
+
 export default function InfrastructurePage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -24,12 +32,43 @@ export default function InfrastructurePage() {
 
   const latestVPS = data.vps_targets?.[0] || {};
   const latestSizes = data.docker_sizes?.[0] || {};
+  const memoryUsed = latestVPS.memory_used_mb || 0;
+  const memoryTotal = latestVPS.memory_total_mb || 0;
+  const diskUsed = latestVPS.disk_used_gb || 0;
+  const diskTotal = latestVPS.disk_total_gb || 0;
 
   return (
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-xl font-bold text-white">Infrastructure</h1>
         <p className="text-sm text-muted">VPS, Docker, and resource overview</p>
+      </div>
+
+      <div className="grid grid-cols-4 gap-4">
+        <MetricCard
+          title="VPS CPU"
+          value={latestVPS.cpu_percent != null ? `${latestVPS.cpu_percent.toFixed(1)}%` : '-'}
+          subtitle={`${latestVPS.cpu_count || 0} cores`}
+          color={latestVPS.cpu_percent > 90 ? 'text-unhealthy' : latestVPS.cpu_percent > 70 ? 'text-warn' : 'text-healthy'}
+        />
+        <MetricCard
+          title="VPS Memory"
+          value={latestVPS.memory_percent != null ? `${latestVPS.memory_percent.toFixed(1)}%` : '-'}
+          subtitle={memoryTotal ? `${memoryUsed.toFixed(0)} / ${memoryTotal.toFixed(0)} MB` : '-'}
+          color={latestVPS.memory_percent > 90 ? 'text-unhealthy' : latestVPS.memory_percent > 70 ? 'text-warn' : 'text-healthy'}
+        />
+        <MetricCard
+          title="VPS Disk"
+          value={latestVPS.disk_percent != null ? `${latestVPS.disk_percent.toFixed(1)}%` : '-'}
+          subtitle={diskTotal ? `${diskUsed.toFixed(1)} / ${diskTotal.toFixed(1)} GB` : '-'}
+          color={latestVPS.disk_percent > 85 ? 'text-warn' : 'text-healthy'}
+        />
+        <MetricCard
+          title="Load Avg"
+          value={latestVPS.load_1m != null ? latestVPS.load_1m.toFixed(2) : '-'}
+          subtitle={`5m ${latestVPS.load_5m ?? '-'} / 15m ${latestVPS.load_15m ?? '-'}`}
+          color="text-accent"
+        />
       </div>
 
       {/* VPS Info */}
@@ -54,15 +93,23 @@ export default function InfrastructurePage() {
           </div>
           <div>
             <p className="text-muted text-xs">Memory</p>
-            <p className="text-white">{latestVPS.memory_total_mb ? `${latestVPS.memory_total_mb} MB` : '-'}</p>
+            <p className="text-white">{memoryTotal ? `${memoryUsed.toFixed(0)} / ${memoryTotal.toFixed(0)} MB` : '-'}</p>
           </div>
           <div>
             <p className="text-muted text-xs">Disk</p>
             <p className="text-white">
-              {latestVPS.disk_used_gb && latestVPS.disk_total_gb
-                ? `${latestVPS.disk_used_gb} / ${latestVPS.disk_total_gb} GB`
+              {diskUsed && diskTotal
+                ? `${diskUsed.toFixed(1)} / ${diskTotal.toFixed(1)} GB`
                 : '-'}
             </p>
+          </div>
+          <div>
+            <p className="text-muted text-xs">Uptime</p>
+            <p className="text-white">{formatUptime(latestVPS.uptime_seconds)}</p>
+          </div>
+          <div>
+            <p className="text-muted text-xs">Source</p>
+            <p className="text-white">{latestVPS.collection_source || '-'}</p>
           </div>
         </div>
       </div>

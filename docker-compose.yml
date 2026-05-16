@@ -13,6 +13,7 @@ services:
       # VPS scan: read-only host mounts for ss/netstat, Nginx/Apache config parsing
       - /etc:/host-etc:ro
       - /proc:/host-proc:ro
+      - /:/host-root:ro
       - /usr:/host-usr:ro
       - /var:/host-var:ro
     environment:
@@ -20,6 +21,10 @@ services:
       - TRAEFIK_LOG_DIR=/traefik-logs
       - USER_LOG_DIR=/user-logs
       - DOCKER_SOCKET=/var/run/docker.sock
+      - HOST_PROC_ROOT=/host-proc
+      - HOST_ETC_ROOT=/host-etc
+      - HOST_ROOT=/host-root
+      - HOST_DISK_PATH=/host-root
       - CHECK_INTERVAL=30
       - HEALTH_CHECK_INTERVAL_SECONDS=30
       - DASHBOARD_USER=admin

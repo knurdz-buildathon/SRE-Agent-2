@@ -85,9 +85,19 @@ CREATE TABLE IF NOT EXISTS vps_metadata (
     kernel TEXT,
     docker_version TEXT,
     cpu_count INTEGER,
+    cpu_percent REAL,
+    load_1m REAL,
+    load_5m REAL,
+    load_15m REAL,
     memory_total_mb REAL,
+    memory_used_mb REAL,
+    memory_available_mb REAL,
+    memory_percent REAL,
     disk_total_gb REAL,
     disk_used_gb REAL,
+    disk_percent REAL,
+    uptime_seconds REAL,
+    collection_source TEXT,
     collected_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -205,6 +215,26 @@ async def migrate_deployments_schema(db: aiosqlite.Connection):
     if "vhost_names" not in colnames:
         await db.execute("ALTER TABLE deployments ADD COLUMN vhost_names TEXT")
         logger.info("Migration: deployments.vhost_names added")
+
+    cursor = await db.execute("PRAGMA table_info(vps_metadata)")
+    rows = await cursor.fetchall()
+    vps_cols = {row[1] for row in rows}
+    vps_columns = {
+        "cpu_percent": "REAL",
+        "load_1m": "REAL",
+        "load_5m": "REAL",
+        "load_15m": "REAL",
+        "memory_used_mb": "REAL",
+        "memory_available_mb": "REAL",
+        "memory_percent": "REAL",
+        "disk_percent": "REAL",
+        "uptime_seconds": "REAL",
+        "collection_source": "TEXT",
+    }
+    for col, col_type in vps_columns.items():
+        if col not in vps_cols:
+            await db.execute(f"ALTER TABLE vps_metadata ADD COLUMN {col} {col_type}")
+            logger.info("Migration: vps_metadata.%s added", col)
 
     cursor = await db.execute("PRAGMA table_info(user_errors)")
     rows = await cursor.fetchall()

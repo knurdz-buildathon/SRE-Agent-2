@@ -108,9 +108,19 @@ class VPSMetadataBase(BaseModel):
     kernel: Optional[str] = None
     docker_version: Optional[str] = None
     cpu_count: Optional[int] = None
+    cpu_percent: Optional[float] = None
+    load_1m: Optional[float] = None
+    load_5m: Optional[float] = None
+    load_15m: Optional[float] = None
     memory_total_mb: Optional[float] = None
+    memory_used_mb: Optional[float] = None
+    memory_available_mb: Optional[float] = None
+    memory_percent: Optional[float] = None
     disk_total_gb: Optional[float] = None
     disk_used_gb: Optional[float] = None
+    disk_percent: Optional[float] = None
+    uptime_seconds: Optional[float] = None
+    collection_source: Optional[str] = None
     collected_at: Optional[str] = None
 
 

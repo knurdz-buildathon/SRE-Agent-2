@@ -170,9 +170,17 @@ services:
 
 ### Infrastructure
 - OS, kernel, Docker version
-- CPU count, total memory, disk usage
+- Host CPU %, load averages, uptime, memory usage, disk usage
 - Docker image/volume/build-cache sizes
-- Disk pressure alerts
+- VPS CPU, memory, and disk pressure alerts
+
+## Metrics Architecture
+
+The monitor separates host and container collection:
+
+- VPS metrics come from read-only host mounts (`/host-proc`, `/host-etc`, `/host-root`) so CPU, memory, uptime, OS, and disk readings describe the VPS instead of the monitoring container.
+- Container metrics come from the Docker API through the mounted Docker socket, keeping per-deployment CPU, memory, restarts, network, and state separate from host-level health.
+- The Infrastructure API returns both layers together: `vps_targets` for host health, `latest_metrics` for deployments, `docker_sizes` for Docker disk usage, and `containers` for live container state.
 
 ## Incident Detection & Deduplication
 
@@ -194,6 +202,8 @@ Incidents are **deduplicated** by deployment + category + fingerprint. If an iss
 | High memory | Warning | Consider memory limits, check for leaks |
 | TCP dependency failure | Critical | Check backing service is running and reachable |
 | Disk pressure | Warning | Prune Docker resources or expand disk |
+| VPS CPU pressure | Warning | Check top processes, container CPU usage, traffic spikes |
+| VPS memory pressure | Warning | Check top processes, container memory usage, swap pressure |
 | Likely env/config issue | Critical | Check .env file, secrets, config mounts |
 
 ## API Routes
@@ -359,6 +369,11 @@ sre-agent/
 | `TRAEFIK_LOG_DIR` | `/traefik-logs` | Traefik access log directory |
 | `USER_LOG_DIR` | `/user-logs` | Application/user log directory for User Errors |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path |
+| `HOST_PROC_ROOT` | `/host-proc` | Mounted VPS `/proc` path used for host CPU, load, memory, and uptime |
+| `HOST_ETC_ROOT` | `/host-etc` | Mounted VPS `/etc` path used for OS metadata |
+| `HOST_ROOT` | `/host-root` | Read-only mounted VPS root used for accurate disk usage |
+| `HOST_DISK_PATH` | `/host-root` | Filesystem path measured for VPS disk usage |
+| `HOST_CPU_SAMPLE_SECONDS` | `0.1` | CPU sampling window for host CPU percentage |
 | `CHECK_INTERVAL` | `30` | Check interval in seconds |
 | `HEALTH_CHECK_INTERVAL_SECONDS` | `30` | Alternate interval env var used by some builds |
 | `DASHBOARD_USER` | `admin` | Basic auth username |

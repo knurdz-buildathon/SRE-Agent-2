@@ -30,6 +30,7 @@ from app.engines.incident_detector import (
     detect_browser_incidents,
     detect_tcp_incidents,
     detect_disk_pressure,
+    detect_vps_resource_pressure,
     create_or_update_incident,
     make_fingerprint,
     resolve_incident,
@@ -490,12 +491,19 @@ async def run_infra_checks():
     vps = collect_vps_metadata()
     await execute(
         """INSERT INTO vps_metadata
-            (target_id, os_name, kernel, docker_version, cpu_count, memory_total_mb, disk_total_gb, disk_used_gb, collected_at)
-        VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (target_id, os_name, kernel, docker_version, cpu_count, cpu_percent,
+             load_1m, load_5m, load_15m, memory_total_mb, memory_used_mb,
+             memory_available_mb, memory_percent, disk_total_gb, disk_used_gb,
+             disk_percent, uptime_seconds, collection_source, collected_at)
+        VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             vps["os_name"], vps["kernel"], vps["docker_version"],
-            vps["cpu_count"], vps["memory_total_mb"],
-            vps["disk_total_gb"], vps["disk_used_gb"],
+            vps["cpu_count"], vps.get("cpu_percent"),
+            vps.get("load_1m"), vps.get("load_5m"), vps.get("load_15m"),
+            vps["memory_total_mb"], vps.get("memory_used_mb"),
+            vps.get("memory_available_mb"), vps.get("memory_percent"),
+            vps["disk_total_gb"], vps["disk_used_gb"], vps.get("disk_percent"),
+            vps.get("uptime_seconds"), vps.get("collection_source"),
             datetime.utcnow().isoformat(),
         ),
     )
@@ -513,6 +521,7 @@ async def run_infra_checks():
     )
 
     await detect_disk_pressure(vps, "local")
+    await detect_vps_resource_pressure(vps, "local")
 
     logger.info("Infrastructure checks completed")
 

@@ -23,6 +23,8 @@ SUGGESTED_FIXES = {
     "infra_collection_failure": "Infrastructure metrics collection failed. Check that the Docker socket is mounted read-only, the monitoring container has access to /var/run/docker.sock, and the daemon is reachable.",
     "docker_socket_failure": "Docker socket/API connection failed. Check that the Docker socket is mounted and the container has access.",
     "disk_pressure": "Disk usage is above 85%. Consider pruning unused Docker images, volumes, and build cache, or expanding disk capacity.",
+    "vps_high_cpu": "VPS CPU usage is above 90%. Check top processes, container CPU usage, and recent traffic spikes.",
+    "vps_high_memory": "VPS memory usage is above 90%. Check top processes, container memory usage, and swap pressure.",
     "likely_env_config_issue": "Container keeps restarting with the same exit code. Likely an environment variable or configuration issue. Check .env file, secrets, and config mounts.",
 }
 
@@ -283,7 +285,7 @@ async def detect_disk_pressure(vps_data: Dict, target_id: str = "local"):
     disk_total = vps_data.get("disk_total_gb", 0)
     disk_used = vps_data.get("disk_used_gb", 0)
     if disk_total > 0:
-        pct = (disk_used / disk_total) * 100
+        pct = vps_data.get("disk_percent") or ((disk_used / disk_total) * 100)
         if pct > 85:
             await create_or_update_incident(
                 deployment_id="_infrastructure",
@@ -296,3 +298,33 @@ async def detect_disk_pressure(vps_data: Dict, target_id: str = "local"):
             )
         else:
             await resolve_incident(make_fingerprint("_infrastructure", "disk_pressure"))
+
+
+async def detect_vps_resource_pressure(vps_data: Dict, target_id: str = "local"):
+    cpu_pct = vps_data.get("cpu_percent") or 0
+    if cpu_pct > 90:
+        await create_or_update_incident(
+            deployment_id="_infrastructure",
+            title=f"VPS CPU pressure: {cpu_pct:.1f}% used",
+            severity="warning",
+            trigger_type="infrastructure",
+            error_category="vps_high_cpu",
+            suggested_fix=SUGGESTED_FIXES["vps_high_cpu"],
+            fingerprint=make_fingerprint("_infrastructure", "vps_high_cpu"),
+        )
+    else:
+        await resolve_incident(make_fingerprint("_infrastructure", "vps_high_cpu"))
+
+    mem_pct = vps_data.get("memory_percent") or 0
+    if mem_pct > 90:
+        await create_or_update_incident(
+            deployment_id="_infrastructure",
+            title=f"VPS memory pressure: {mem_pct:.1f}% used",
+            severity="warning",
+            trigger_type="infrastructure",
+            error_category="vps_high_memory",
+            suggested_fix=SUGGESTED_FIXES["vps_high_memory"],
+            fingerprint=make_fingerprint("_infrastructure", "vps_high_memory"),
+        )
+    else:
+        await resolve_incident(make_fingerprint("_infrastructure", "vps_high_memory"))

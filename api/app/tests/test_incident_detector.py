@@ -47,6 +47,8 @@ class TestSuggestedFixes:
             "tcp_dependency_failure",
             "docker_socket_failure",
             "disk_pressure",
+            "vps_high_cpu",
+            "vps_high_memory",
             "likely_env_config_issue",
         ]
         for cat in expected_categories:

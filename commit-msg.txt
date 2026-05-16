@@ -1,0 +1,10 @@
+Converge deployment status from all check types (HTTP + container + TCP + browser)
+
+- Each check phase contributes a status (`_health_statuses`, `_container_statuses`, etc.)
+- `_worst_status()` merges to the most severe status and writes to `deployments.status`
+- Overview buckets now recognize `running` = up, `stopped`/`restarting` = down
+- DeploymentCard shows main converged badge + Website/Container sub-badges
+- Added `degraded`/`warning` border colors
+- Tests: 82/82 pass
+
+Closes status-only-from-HTTP-checks bug.
