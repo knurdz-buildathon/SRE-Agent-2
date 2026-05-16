@@ -360,6 +360,7 @@ sre-agent/
 | `USER_LOG_DIR` | `/user-logs` | Application/user log directory for User Errors |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path |
 | `CHECK_INTERVAL` | `30` | Check interval in seconds |
+| `HEALTH_CHECK_INTERVAL_SECONDS` | `30` | Alternate interval env var used by some builds |
 | `DASHBOARD_USER` | `admin` | Basic auth username |
 | `DASHBOARD_PASS` | `admin` | Basic auth password |
 | `DEMO_MODE` | `false` | Demo seeds & synthetic infra fallback (enable only for local demos) |

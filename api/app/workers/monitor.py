@@ -38,7 +38,7 @@ from app.engines.incident_detector import (
 
 logger = logging.getLogger("sre")
 
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "30"))
+CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL_SECONDS", os.getenv("CHECK_INTERVAL", "30")))
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 LOG_MAX_BYTES_PER_FILE = int(os.getenv("LOG_MAX_BYTES_PER_FILE", "2000000"))
 
