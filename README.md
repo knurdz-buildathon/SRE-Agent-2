@@ -45,7 +45,7 @@ The dashboard opens at **http://localhost:3000**. The API is at **http://localho
 With **`DEMO_MODE=false`** (set in `docker-compose.yml` and `.env.example`), the agent **does not seed fake deployments**. Discovery merges:
 
 1. **Labeled containers** — **`sre.monitor=true`** (`1`, `yes`, `on` accepted).
-2. **Auto-scan (default `AUTO_DISCOVER_WEB=true`)** — scans **all Docker containers** (except skips); for each **host-published TCP port** (e.g. `8080:80`), probes **`http(s)://host.docker.internal:<published-port>/`** from inside `sre-agent-api`, so **existing Compose-published sites show up without labels**.
+2. **Auto-scan (default `AUTO_DISCOVER_WEB=true`)** — scans Docker containers (except skips); for each **published TCP port whose host port is a known web port** (80/443/8080/3000/… — databases and queues are ignored), probes **`http(s)://host.docker.internal:<published-port>/`** from inside `sre-agent-api`, so **Compose-published websites show up without labels**.
 3. **VPS-wide scan (default `VPS_SCAN_ENABLED=true`)** — reads the **host’s** listening ports from **`/host-proc/net/tcp`** (Compose mounts host `/proc` there), skips ports already found by Docker discovery, and parses **Nginx / Apache** configs under **`/host-etc`** for **`server_name`** / **`ServerName`** so probes send the right **`Host`** header. This picks up **native** web servers (not only containers).
 
 Containers already labeled are **not** duplicated by auto-scan.
@@ -53,7 +53,7 @@ Containers already labeled are **not** duplicated by auto-scan.
 **Auto-scan VPS notes**
 
 - Compose sets **`extra_hosts: ["host.docker.internal:host-gateway"]`** so Linux can reach the host’s published ports.
-- Tune **`AUTO_DISCOVER_SKIP_HOST_PORTS`** for DB/cache ports you publish (`3306`, `6379`, …).
+- **`AUTO_DISCOVER_SKIP_HOST_PORTS`** affects **VPS scan** only (host listeners): excludes DB/cache/admin ports from `/proc/net/tcp` discovery — Docker auto-scan already restricts to **web-facing ports only**.
 - **`127.0.0.1`-only publishes** — bindings like `127.0.0.1:8080:80` are skipped (both Docker ``Ports`` and ``PortBindings``): the browser on the host may work but **`host.docker.internal`** from the agent container cannot reach loopback-only sockets. Publish **`0.0.0.0`** or use **`sre.health_url`** to a URL the agent can reach.
 - **Internal-only** services (no host bind): if **`sre-agent-api`** joins the **same user-defined network** as your app, the agent probes `http://<container-dns>:<exposed-port>/`.
 
@@ -382,8 +382,7 @@ sre-agent/
 | `AUTO_DISCOVER_WEB` | `true` | Scan Docker for published ports → deployments without labels |
 | `PROBE_HOST` | `host.docker.internal` | Host used to reach published ports from the agent container |
 | `AUTO_DISCOVER_SKIP_CONTAINERS` | see `.env.example` | Comma names skipped by auto-scan |
-| `AUTO_DISCOVER_SKIP_HOST_PORTS` | DB/cache defaults | Skip noisy/non-HTTP binds |
-| `AUTO_DISCOVER_ORPHANS` | `false` | List containers with no probe URL |
+| `AUTO_DISCOVER_SKIP_HOST_PORTS` | DB/cache defaults | **VPS scan only**: skip host listener ports (not used for Docker auto-scan) |
 | `AUTO_BROWSER_AUTO` | `false` | Run Playwright on auto-discovered URLs |
 | `VPS_SCAN_ENABLED` | `true` | Host `/proc` listeners + Nginx/Apache vhost scan |
 | `HOST_PROC_NET_TCP` | `/host-proc/net/tcp` | Override path to host proc tcp snapshot |

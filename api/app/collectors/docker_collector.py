@@ -20,16 +20,6 @@ AUTO_DISCOVER_SKIP_CONTAINERS = {
     x.strip().lstrip("/") for x in _AUTO_SKIP_RAW.split(",") if x.strip()
 }
 
-_SKIP_HP_RAW = os.getenv(
-    "AUTO_DISCOVER_SKIP_HOST_PORTS",
-    "3306,5432,5433,6379,6380,27017,5672,9092,2181,8500",
-)
-AUTO_DISCOVER_SKIP_HOST_PORTS = {
-    int(x.strip())
-    for x in _SKIP_HP_RAW.split(",")
-    if x.strip().isdigit()
-}
-
 HTTP_PRIORITY = (
     443,
     8443,
@@ -50,8 +40,11 @@ HTTP_PRIORITY = (
     9080,
 )
 
+# Set version for fast membership test.  Only ports in this set are considered
+# web-facing; everything else (databases, queues, internal services) is ignored.
+HTTP_PORTS = set(HTTP_PRIORITY) | {2083, 2087}
+
 MAX_AUTO_PORTS = int(os.getenv("AUTO_DISCOVER_MAX_PORTS_PER_CONTAINER", "12"))
-AUTO_DISCOVER_ORPHANS = os.getenv("AUTO_DISCOVER_ORPHANS", "false").lower() == "true"
 
 _TRAEFIK_HOST_RES = [
     re.compile(r"Host\s*\(\s*`([^`]+)`", re.I),
@@ -128,61 +121,47 @@ def _http_sort_key(port: int) -> int:
 
 
 def extract_tcp_host_bindings(attrs: dict) -> List[Tuple[int, int]]:
-    """Published TCP ports: (host_port, container_port)."""
+    """Published TCP ports that are web-facing (host port in HTTP_PORTS)."""
     out: List[Tuple[int, int]] = []
-    ports = attrs.get("NetworkSettings", {}).get("Ports") or {}
-    for key, binds in ports.items():
-        if "/" not in key:
-            continue
-        cport_str, proto = key.split("/", 1)
-        if proto != "tcp":
-            continue
-        cport = int(cport_str)
-        if not binds:
-            continue
-        for b in binds:
-            hp = b.get("HostPort")
-            if not hp:
+    for raw_dict in (
+        attrs.get("NetworkSettings", {}).get("Ports") or {},
+        attrs.get("HostConfig", {}).get("PortBindings") or {},
+    ):
+        if out:
+            break  # prefer NetworkSettings.Ports when present
+        for key, binds in raw_dict.items():
+            if "/" not in key:
                 continue
-            hip_raw = (b.get("HostIp") or "").strip()
-            if hip_raw in ("127.0.0.1", "::1"):
+            cport_str, proto = key.split("/", 1)
+            if proto != "tcp":
                 continue
-            hp_int = int(hp)
-            if hp_int not in AUTO_DISCOVER_SKIP_HOST_PORTS:
-                out.append((hp_int, cport))
-    if out:
-        return out
-    pb = attrs.get("HostConfig", {}).get("PortBindings") or {}
-    for key, binds in pb.items():
-        if "/" not in key:
-            continue
-        cport_str, proto = key.split("/", 1)
-        if proto != "tcp":
-            continue
-        cport = int(cport_str)
-        if not binds:
-            continue
-        for b in binds:
-            hp = b.get("HostPort")
-            if not hp:
+            cport = int(cport_str)
+            if not binds:
                 continue
-            hip_raw = (b.get("HostIp") or "").strip()
-            if hip_raw in ("127.0.0.1", "::1"):
-                continue
-            hp_int = int(hp)
-            if hp_int not in AUTO_DISCOVER_SKIP_HOST_PORTS:
+            for b in binds:
+                hp = b.get("HostPort")
+                if not hp:
+                    continue
+                hip_raw = (b.get("HostIp") or "").strip()
+                if hip_raw in ("127.0.0.1", "::1"):
+                    continue
+                hp_int = int(hp)
+                # Only include web-facing host ports
+                if hp_int not in HTTP_PORTS:
+                    continue
                 out.append((hp_int, cport))
     return out
 
 
 def extract_exposed_tcp_ports(attrs: dict) -> List[int]:
+    """Exposed container TCP ports that look like HTTP services."""
     exp = attrs.get("Config", {}).get("ExposedPorts") or {}
     ports = []
     for key in exp:
         if key.endswith("/tcp"):
             try:
                 p = int(key.split("/")[0])
-                if p not in AUTO_DISCOVER_SKIP_HOST_PORTS:
+                if p in HTTP_PORTS:
                     ports.append(p)
             except ValueError:
                 continue
@@ -324,30 +303,6 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
                     }
                 )
                 continue
-
-        # Optionally record containers with no HTTP port mapping (batch jobs, DB-only)
-        if not AUTO_DISCOVER_ORPHANS:
-            continue
-        dep_id = f"auto-{short}-noxpose"
-        slug = f"{safe_slug_base}-noxpose"[:80]
-        auto.append(
-            {
-                "id": dep_id,
-                "slug": slug,
-                "environment": "auto-discovered",
-                "git_url": None,
-                "health_url": None,
-                "browser_url": None,
-                "expected_selector": None,
-                "tcp_checks": None,
-                "probe_host_header": probe_h,
-                "container_id": container.id,
-                "container_name": name,
-                "image": image_short,
-                "status": "running" if running else "stopped",
-                "source": "docker",
-            }
-        )
 
     return auto
 

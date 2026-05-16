@@ -1,5 +1,6 @@
 import os
 import platform
+import shutil
 import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -114,11 +115,16 @@ def _meminfo(proc_root: Path) -> Dict[str, float]:
 def _disk_usage(path: Path) -> Dict[str, float]:
     probe = path if path.exists() else Path("/")
     try:
-        stat = os.statvfs(probe)
-    except OSError:
+        if hasattr(os, "statvfs"):
+            stat = os.statvfs(probe)
+            total = stat.f_blocks * stat.f_frsize
+            free = stat.f_bavail * stat.f_frsize
+        else:
+            du = shutil.disk_usage(str(probe.resolve()))
+            total = du.total
+            free = du.free
+    except (OSError, AttributeError):
         return {"disk_total_gb": 0.0, "disk_used_gb": 0.0, "disk_percent": 0.0}
-    total = stat.f_blocks * stat.f_frsize
-    free = stat.f_bavail * stat.f_frsize
     used = max(total - free, 0)
     percent = (used / total) * 100 if total else 0.0
     return {

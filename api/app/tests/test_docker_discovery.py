@@ -1,5 +1,4 @@
 """Tests for Docker auto-discovery helpers."""
-import pytest
 from app.collectors.docker_collector import (
     extract_tcp_host_bindings,
     extract_exposed_tcp_ports,
@@ -42,16 +41,42 @@ class TestExtractTcpHostBindings:
                 }
             },
         }
-        assert extract_tcp_host_bindings(attrs) == [(18080, 8080)]
+        # 18080 is not in HTTP_PORTS, so this should return empty
+        assert extract_tcp_host_bindings(attrs) == []
 
-    def test_skip_mysql_host_port(self):
+    def test_skip_non_http_ports(self):
+        """MySQL, Redis, MongoDB etc. are not in HTTP_PORTS — must be excluded."""
         attrs = {
             "NetworkSettings": {
-                "Ports": {"3306/tcp": [{"HostIp": "0.0.0.0", "HostPort": "3306"}]}
+                "Ports": {
+                    "3306/tcp": [{"HostIp": "0.0.0.0", "HostPort": "3306"}],
+                    "6379/tcp": [{"HostIp": "0.0.0.0", "HostPort": "6379"}],
+                    "27017/tcp": [{"HostIp": "0.0.0.0", "HostPort": "27017"}],
+                    "5432/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5432"}],
+                }
             },
             "HostConfig": {"PortBindings": {}},
         }
         assert extract_tcp_host_bindings(attrs) == []
+
+    def test_only_http_host_ports_returned(self):
+        """Only host ports in HTTP_PORTS should be returned."""
+        attrs = {
+            "NetworkSettings": {
+                "Ports": {
+                    "80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "80"}],
+                    "3306/tcp": [{"HostIp": "0.0.0.0", "HostPort": "3306"}],
+                    "8080/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}],
+                    "6379/tcp": [{"HostIp": "0.0.0.0", "HostPort": "6379"}],
+                }
+            },
+            "HostConfig": {"PortBindings": {}},
+        }
+        got = extract_tcp_host_bindings(attrs)
+        host_ports = {hp for hp, _ in got}
+        assert host_ports == {80, 8080}
+        assert 3306 not in host_ports
+        assert 6379 not in host_ports
 
 
 class TestHealthPathFromLabels:
@@ -81,7 +106,12 @@ class TestExtractTraefikHost:
 
 
 class TestExtractExposedTcpPorts:
-    def test_exposed(self):
+    def test_exposed_http_only(self):
         attrs = {"Config": {"ExposedPorts": {"80/tcp": {}, "443/tcp": {}}}}
         got = extract_exposed_tcp_ports(attrs)
         assert set(got) == {80, 443}
+
+    def test_exposed_skips_non_http(self):
+        attrs = {"Config": {"ExposedPorts": {"80/tcp": {}, "3306/tcp": {}, "6379/tcp": {}}}}
+        got = extract_exposed_tcp_ports(attrs)
+        assert set(got) == {80}
