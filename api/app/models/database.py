@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS incident_timeline (
 CREATE TABLE IF NOT EXISTS user_errors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     deployment_id TEXT,
+    source TEXT DEFAULT 'traefik',
     path TEXT NOT NULL,
     method TEXT,
     status_code INTEGER NOT NULL,
@@ -151,6 +152,14 @@ CREATE TABLE IF NOT EXISTS user_errors (
     first_seen TEXT DEFAULT (datetime('now')),
     last_seen TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (deployment_id) REFERENCES deployments(id)
+);
+
+CREATE TABLE IF NOT EXISTS log_ingest_state (
+    source TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    offset INTEGER DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (source, file_path)
 );
 
 CREATE INDEX IF NOT EXISTS idx_health_deployment ON health_checks(deployment_id, checked_at);
@@ -196,6 +205,14 @@ async def migrate_deployments_schema(db: aiosqlite.Connection):
     if "vhost_names" not in colnames:
         await db.execute("ALTER TABLE deployments ADD COLUMN vhost_names TEXT")
         logger.info("Migration: deployments.vhost_names added")
+
+    cursor = await db.execute("PRAGMA table_info(user_errors)")
+    rows = await cursor.fetchall()
+    user_error_cols = {row[1] for row in rows}
+    if "source" not in user_error_cols:
+        await db.execute("ALTER TABLE user_errors ADD COLUMN source TEXT DEFAULT 'traefik'")
+        logger.info("Migration: user_errors.source added")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_user_errors_source ON user_errors(source)")
 
 
 async def execute(query: str, params=(), commit: bool = True):

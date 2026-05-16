@@ -20,7 +20,7 @@ async def list_errors():
 @router.get("/user-errors")
 async def list_user_errors():
     errors = await fetch_all(
-        """SELECT id, deployment_id, path, method, status_code, error_category, count, first_seen, last_seen
+        """SELECT id, deployment_id, source, path, method, status_code, error_category, count, first_seen, last_seen
         FROM user_errors
         ORDER BY count DESC LIMIT 100"""
     )
@@ -30,9 +30,9 @@ async def list_user_errors():
 @router.get("/user-errors/summary")
 async def user_errors_summary():
     top_paths = await fetch_all(
-        """SELECT path, SUM(count) as total_count, error_category, status_code
+        """SELECT path, source, SUM(count) as total_count, error_category, status_code
         FROM user_errors
-        GROUP BY path, status_code
+        GROUP BY source, path, status_code
         ORDER BY total_count DESC LIMIT 20"""
     )
 
@@ -50,8 +50,16 @@ async def user_errors_summary():
         ORDER BY total_count DESC"""
     )
 
+    by_source = await fetch_all(
+        """SELECT source, SUM(count) as total_count, COUNT(*) as distinct_errors
+        FROM user_errors
+        GROUP BY source
+        ORDER BY total_count DESC"""
+    )
+
     return {
         "top_failing_paths": top_paths,
         "by_category": by_category,
         "by_status_code": by_status,
+        "by_source": by_source,
     }

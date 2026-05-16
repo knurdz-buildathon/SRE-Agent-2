@@ -91,6 +91,7 @@ class IncidentTimelineBase(BaseModel):
 class UserErrorBase(BaseModel):
     id: int
     deployment_id: Optional[str] = None
+    source: str = "traefik"
     path: str
     method: Optional[str] = None
     status_code: int
@@ -127,6 +128,7 @@ class OverviewResponse(BaseModel):
     total_deployments: int = 0
     up_count: int = 0
     down_count: int = 0
+    unknown_count: int = 0
     open_incidents: int = 0
     deployments: List[dict] = []
 

@@ -16,11 +16,14 @@ from app.collectors.docker_collector import (
 from app.collectors.vps_scanner import discover_vps_deployments
 from app.collectors.health_collector import http_health_check, run_tcp_checks
 from app.collectors.browser_collector import browser_check
+from app.collectors.log_reader import read_new_log_entries
 from app.collectors.traefik_parser import (
-    collect_traefik_logs,
+    TRAEFIK_LOG_DIR,
+    parse_traefik_access_log,
     categorize_user_errors,
     detect_traefik_incidents,
 )
+from app.collectors.user_log_parser import USER_LOG_DIR, parse_user_log_line
 from app.engines.incident_detector import (
     detect_container_incidents,
     detect_health_incidents,
@@ -37,6 +40,7 @@ logger = logging.getLogger("sre")
 
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "30"))
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+LOG_MAX_BYTES_PER_FILE = int(os.getenv("LOG_MAX_BYTES_PER_FILE", "2000000"))
 
 
 def _health_failure_threshold() -> int:
@@ -54,6 +58,68 @@ def _probe_host_header(dep: dict):
         return None
     s = str(h).strip()
     return s or None
+
+
+async def _load_log_offsets(source: str) -> dict:
+    rows = await fetch_all(
+        "SELECT file_path, offset FROM log_ingest_state WHERE source = ?",
+        (source,),
+    )
+    return {row["file_path"]: int(row.get("offset") or 0) for row in rows}
+
+
+async def _save_log_offsets(source: str, offsets: dict):
+    now = datetime.utcnow().isoformat()
+    for file_path, offset in offsets.items():
+        await execute(
+            """INSERT INTO log_ingest_state (source, file_path, offset, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(source, file_path) DO UPDATE SET offset = excluded.offset, updated_at = excluded.updated_at""",
+            (source, file_path, int(offset or 0), now),
+        )
+
+
+def _deployment_lookup(deployments: list) -> dict:
+    lookup = {}
+    for dep in deployments:
+        for key in (
+            dep.get("id"),
+            dep.get("slug"),
+            dep.get("container_name"),
+            dep.get("image"),
+        ):
+            if key:
+                lookup[str(key).lower()] = dep["id"]
+    return lookup
+
+
+def _attach_deployment_ids(entries: list, deployments: list) -> list:
+    lookup = _deployment_lookup(deployments)
+    if not lookup:
+        return entries
+
+    for entry in entries:
+        if entry.get("deployment_id"):
+            continue
+        candidates = [
+            entry.get("upstream"),
+            entry.get("service"),
+            entry.get("source_file"),
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            normalized = str(candidate).lower()
+            if normalized in lookup:
+                entry["deployment_id"] = lookup[normalized]
+                break
+            for known, deployment_id in lookup.items():
+                if known and known in normalized:
+                    entry["deployment_id"] = deployment_id
+                    break
+            if entry.get("deployment_id"):
+                break
+    return entries
 
 
 async def purge_deployment_from_db(deployment_id: str):
@@ -355,21 +421,90 @@ async def run_infra_checks():
     logger.info("Infrastructure checks completed")
 
 
+async def _upsert_user_error(err: dict):
+    deployment_key = err.get("deployment_id") or ""
+    source = err.get("source") or "traefik"
+    method = err.get("method", "")
+    existing = await fetch_one(
+        """SELECT id, count FROM user_errors
+        WHERE path = ? AND status_code = ? AND method = ? AND source = ? AND COALESCE(deployment_id, '') = ?""",
+        (err["path"], err["status_code"], method, source, deployment_key),
+    )
+    if existing:
+        new_count = existing["count"] + err["count"]
+        await execute(
+            "UPDATE user_errors SET count = ?, last_seen = ?, error_category = ? WHERE id = ?",
+            (new_count, err.get("last_seen"), err.get("error_category"), existing["id"]),
+        )
+    else:
+        await execute(
+            """INSERT INTO user_errors
+                (deployment_id, source, path, method, status_code, error_category, count, first_seen, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                err.get("deployment_id"),
+                source,
+                err["path"],
+                method,
+                err["status_code"],
+                err.get("error_category"),
+                err["count"],
+                err.get("first_seen"),
+                err.get("last_seen"),
+            ),
+        )
+
+
+async def _process_user_error_entries(entries: list, incident_source: str):
+    user_errors = categorize_user_errors(entries)
+    for err in user_errors:
+        await _upsert_user_error(err)
+
+    incidents = detect_traefik_incidents(entries)
+    for inc in incidents:
+        deployment_id = inc.get("deployment_id") or f"_{incident_source}"
+        await create_or_update_incident(
+            deployment_id=deployment_id,
+            title=inc["title"],
+            severity=inc["severity"],
+            trigger_type=f"{incident_source}_log",
+            error_category=inc["error_category"],
+            suggested_fix=inc["suggested_fix"],
+            fingerprint=make_fingerprint(
+                deployment_id,
+                f"{incident_source}_{inc['path']}_{inc['error_category']}",
+                inc["path"],
+            ),
+        )
+
+    return user_errors, incidents
+
+
 async def run_traefik_checks():
-    """Parse Traefik logs and detect user-facing errors."""
-    entries = collect_traefik_logs()
+    """Parse new Traefik log lines and detect user-facing errors."""
+    offsets = await _load_log_offsets("traefik")
+    entries, new_offsets = read_new_log_entries(
+        TRAEFIK_LOG_DIR,
+        parse_traefik_access_log,
+        offsets,
+        source="traefik",
+        max_bytes_per_file=LOG_MAX_BYTES_PER_FILE,
+    )
     if not entries:
-        logger.debug("No Traefik log entries found")
+        await _save_log_offsets("traefik", new_offsets)
+        logger.debug("No new Traefik log entries found")
         return
 
-    # Store recent entries
-    for entry in entries[-200:]:  # limit to recent
+    deployments = await fetch_all("SELECT id, slug, container_name, image FROM deployments")
+    entries = _attach_deployment_ids(entries, deployments)
+
+    for entry in entries[-200:]:
         await execute(
             """INSERT INTO traefik_logs
                 (deployment_id, method, path, status_code, duration_ms, upstream, remote_ip, logged_at, raw_line)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                None,
+                entry.get("deployment_id"),
                 entry.get("method"),
                 entry.get("path"),
                 entry.get("status_code"),
@@ -381,44 +516,41 @@ async def run_traefik_checks():
             ),
         )
 
-    # Detect user errors
-    user_errors = categorize_user_errors(entries)
-    for err in user_errors:
-        existing = await fetch_one(
-            "SELECT id, count FROM user_errors WHERE path = ? AND status_code = ? AND method = ?",
-            (err["path"], err["status_code"], err.get("method", "")),
-        )
-        if existing:
-            new_count = existing["count"] + err["count"]
-            await execute(
-                "UPDATE user_errors SET count = ?, last_seen = ? WHERE id = ?",
-                (new_count, err.get("last_seen"), existing["id"]),
-            )
-        else:
-            await execute(
-                """INSERT INTO user_errors (deployment_id, path, method, status_code, error_category, count, first_seen, last_seen)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    None, err["path"], err.get("method", ""),
-                    err["status_code"], err.get("error_category"),
-                    err["count"], err.get("first_seen"), err.get("last_seen"),
-                ),
-            )
+    user_errors, incidents = await _process_user_error_entries(entries, "traefik")
+    await _save_log_offsets("traefik", new_offsets)
+    logger.info(
+        "Traefik checks: %s new entries, %s error categories, %s incidents",
+        len(entries),
+        len(user_errors),
+        len(incidents),
+    )
 
-    # Detect Traefik incidents
-    traefik_incidents = detect_traefik_incidents(entries)
-    for inc in traefik_incidents:
-        await create_or_update_incident(
-            deployment_id="_traefik",
-            title=inc["title"],
-            severity=inc["severity"],
-            trigger_type="traefik_log",
-            error_category=inc["error_category"],
-            suggested_fix=inc["suggested_fix"],
-            fingerprint=make_fingerprint("_traefik", f"traefik_{inc['path']}_{inc['error_category']}", inc["path"]),
-        )
 
-    logger.info(f"Traefik checks: {len(entries)} entries, {len(user_errors)} error categories, {len(traefik_incidents)} incidents")
+async def run_user_log_checks():
+    """Parse mounted app/user logs and feed the User Errors dashboard."""
+    offsets = await _load_log_offsets("user_log")
+    entries, new_offsets = read_new_log_entries(
+        USER_LOG_DIR,
+        parse_user_log_line,
+        offsets,
+        source="user_log",
+        max_bytes_per_file=LOG_MAX_BYTES_PER_FILE,
+    )
+    if not entries:
+        await _save_log_offsets("user_log", new_offsets)
+        logger.debug("No new user log entries found")
+        return
+
+    deployments = await fetch_all("SELECT id, slug, container_name, image FROM deployments")
+    entries = _attach_deployment_ids(entries, deployments)
+    user_errors, incidents = await _process_user_error_entries(entries, "user_log")
+    await _save_log_offsets("user_log", new_offsets)
+    logger.info(
+        "User log checks: %s new entries, %s error categories, %s incidents",
+        len(entries),
+        len(user_errors),
+        len(incidents),
+    )
 
 
 async def run_all_checks():
@@ -452,6 +584,11 @@ async def run_all_checks():
         await run_traefik_checks()
     except Exception as e:
         logger.error(f"run_traefik_checks failed: {e}")
+
+    try:
+        await run_user_log_checks()
+    except Exception as e:
+        logger.error(f"run_user_log_checks failed: {e}")
 
     # Browser checks are less frequent - run every other cycle
     # (they're slow and resource-intensive)

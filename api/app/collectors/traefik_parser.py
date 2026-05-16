@@ -84,7 +84,17 @@ def categorize_user_errors(entries: List[Dict]) -> List[Dict]:
     """Group and categorize Traefik entries that represent user-facing errors."""
     from collections import defaultdict
 
-    error_map = defaultdict(lambda: {"count": 0, "first_seen": None, "last_seen": None, "method": "", "upstream": ""})
+    error_map = defaultdict(
+        lambda: {
+            "count": 0,
+            "first_seen": None,
+            "last_seen": None,
+            "method": "",
+            "upstream": "",
+            "source": "traefik",
+            "deployment_id": None,
+        }
+    )
 
     for entry in entries:
         code = entry.get("status_code", 0)
@@ -93,7 +103,9 @@ def categorize_user_errors(entries: List[Dict]) -> List[Dict]:
 
         path = entry.get("path", "/unknown")
         method = entry.get("method", "GET")
-        key = (path, method, code)
+        source = entry.get("source") or "traefik"
+        deployment_id = entry.get("deployment_id")
+        key = (deployment_id or "", source, path, method, code)
         category = _error_category(code)
 
         bucket = error_map[key]
@@ -102,6 +114,8 @@ def categorize_user_errors(entries: List[Dict]) -> List[Dict]:
         bucket["status_code"] = code
         bucket["path"] = path
         bucket["upstream"] = entry.get("upstream", "")
+        bucket["source"] = source
+        bucket["deployment_id"] = deployment_id
         bucket["error_category"] = category
         ts = entry.get("logged_at", "")
         if not bucket["first_seen"] or (ts and ts < bucket["first_seen"]):
@@ -158,12 +172,32 @@ def detect_traefik_incidents(entries: List[Dict], threshold: int = 5) -> List[Di
                 "title": title,
                 "severity": severity,
                 "error_category": err["error_category"],
-                "trigger_type": "traefik_log",
+                "trigger_type": f"{err.get('source') or 'traefik'}_log",
                 "count": err["count"],
                 "path": err["path"],
-                "suggested_fix": _traefik_fix(code, err["path"]),
+                "source": err.get("source") or "traefik",
+                "deployment_id": err.get("deployment_id"),
+                "suggested_fix": _log_fix(code, err["path"], err.get("source") or "traefik"),
             })
     return incidents
+
+
+def _log_fix(code: int, path: str, source: str) -> str:
+    if source == "traefik":
+        return _traefik_fix(code, path)
+    if code == 404:
+        return f"Repeated 404 from application logs on {path}. Check route definitions, frontend fallback routing, and missing assets."
+    elif code == 502:
+        return f"Repeated 502 in application logs on {path}. Check upstream dependency health, network connectivity, and retry behavior."
+    elif code == 503:
+        return f"Repeated 503 in application logs on {path}. The app or a dependency may be overloaded or not ready."
+    elif code == 504:
+        return f"Repeated 504 in application logs on {path}. Check slow dependencies, timeout settings, and long-running requests."
+    elif 400 <= code < 500:
+        return f"Repeated {code} in application logs on {path}. Review request validation, authentication, and client behavior."
+    elif 500 <= code < 600:
+        return f"Repeated {code} in application logs on {path}. Check application stack traces and recent deployments."
+    return f"Review application log error {code} on {path}."
 
 
 def _traefik_fix(code: int, path: str) -> str:

@@ -13,7 +13,7 @@ A Docker-based monitoring agent that discovers Docker Compose websites, continuo
                                  │
                     ┌────────────┼────────────┐
                     │            │            │
-              Docker Socket  Traefik Logs  Playwright
+              Docker Socket  Access/App Logs  Playwright
                     │            │            │
               ┌─────┴────┐ ┌────┴─────┐ ┌────┴──────┐
               │ Docker & │ │ Access   │ │ Browser   │
@@ -69,7 +69,7 @@ Auto-discovery probes **`host.docker.internal:<port>`** without the browser’s 
 
 The API service mounts **`/etc`**, **`/proc`**, **`/usr`**, **`/var`** from the host read-only (`/host-etc`, `/host-proc`, …). Disable with **`VPS_SCAN_ENABLED=false`** if you do not want those paths visible inside the container.
 
-- Mount Traefik access logs into **`./traefik-logs`** so **User Errors** come from **live logs**, not samples.
+- Mount Traefik access logs into **`./traefik-logs`** and app/user logs into **`./user-logs`** so **User Errors** come from live traffic logs, not samples.
 - If Docker discovery succeeds, deployments **removed from Docker** are **purged from SQLite** (with related checks/incidents). To erase all stored history: `docker compose down -v`.
 
 You normally **do not need labels** for stacks that already **publish** HTTP ports on the host; add **`sre.monitor`** only when you want custom health/browser URLs or selectors.
@@ -161,8 +161,9 @@ services:
 - CPU %, memory usage, network RX/TX
 - High CPU/memory alerts
 
-### Traefik Access Log Analysis
+### User Error Log Analysis
 - Parses JSON and common log formats
+- Reads Traefik access logs and generic app/user logs incrementally
 - Detects repeated 4xx (user errors) and 5xx (server errors)
 - Groups by path, method, status code
 - Auto-creates incidents for repeated errors
@@ -209,7 +210,7 @@ Incidents are **deduplicated** by deployment + category + fingerprint. If an iss
 | GET | `/api/incidents` | All incidents (filter by status/severity) |
 | GET | `/api/incidents/{id}` | Incident detail with timeline |
 | GET | `/api/errors` | All failed health checks |
-| GET | `/api/user-errors` | User-facing errors from Traefik logs |
+| GET | `/api/user-errors` | User-facing errors from access/app logs |
 | GET | `/api/user-errors/summary` | Aggregated error summary |
 | GET | `/api/infrastructure` | VPS metadata, Docker sizes, container list |
 
@@ -221,7 +222,7 @@ Incidents are **deduplicated** by deployment + category + fingerprint. If an iss
 4. **Infrastructure** — VPS info, Docker disk usage, CPU/memory bars per deployment, container list
 5. **User Errors** — Top failing paths, error category breakdown, status code distribution, hit counts
 
-## Traefik Log Integration
+## Log Integration
 
 Mount your Traefik access log directory into the API container:
 
@@ -235,6 +236,19 @@ services:
 ```
 
 Both JSON and Common Log Format are supported.
+
+Mount application access/error logs as user logs when you want app-level routes and failures in the same **User Errors** dashboard:
+
+```yaml
+services:
+  sre-agent-api:
+    volumes:
+      - /path/to/app/logs:/user-logs:ro
+    environment:
+      - USER_LOG_DIR=/user-logs
+```
+
+Generic user logs support JSON/JSONL plus simple text patterns such as `method=GET path=/checkout status=500`, Common Log Format, and error lines containing an HTTP method and path. Log offsets are stored in SQLite so repeated monitor cycles do not double-count the same lines.
 
 ## Security Notes
 
@@ -268,6 +282,8 @@ sre-agent/
 ├── .env.example
 ├── traefik-logs/
 │   └── access.log          # Sample Traefik log
+├── user-logs/
+│   └── .gitkeep            # Mount app/user logs here
 ├── api/
 │   ├── Dockerfile
 │   ├── requirements.txt
@@ -282,6 +298,8 @@ sre-agent/
 │       │   ├── vps_scanner.py
 │       │   ├── health_collector.py
 │       │   ├── browser_collector.py
+│       │   ├── log_reader.py
+│       │   ├── user_log_parser.py
 │       │   └── traefik_parser.py
 │       ├── engines/
 │       │   └── incident_detector.py
@@ -339,6 +357,7 @@ sre-agent/
 |----------|---------|-------------|
 | `DATABASE_PATH` | `/data/sre.db` | SQLite database path |
 | `TRAEFIK_LOG_DIR` | `/traefik-logs` | Traefik access log directory |
+| `USER_LOG_DIR` | `/user-logs` | Application/user log directory for User Errors |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path |
 | `CHECK_INTERVAL` | `30` | Check interval in seconds |
 | `DASHBOARD_USER` | `admin` | Basic auth username |
@@ -360,4 +379,5 @@ sre-agent/
 | `HTTP_PROBE_GATEWAY_SNI` | `true` | HTTPS to `PROBE_HOST` uses TLS SNI from probe hostname (`curl --resolve` behavior) |
 | `HTTP_PROBE_GATEWAY_HOSTS` | _(empty)_ | Extra comma-separated hostnames treated as gateway TCP targets for SNI logic |
 | `HEALTH_DOWN_AFTER_FAILURES` | `3` | Consecutive failed HTTP checks before status becomes **down** |
+| `LOG_MAX_BYTES_PER_FILE` | `2000000` | Maximum new bytes read per log file per cycle |
 

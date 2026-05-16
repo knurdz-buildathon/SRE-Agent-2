@@ -109,6 +109,15 @@ class TestCategorizeUserErrors:
         result = categorize_user_errors(entries)
         assert len(result) == 2
 
+    def test_separates_different_sources(self):
+        entries = [
+            {"method": "GET", "path": "/api", "status_code": 500, "source": "traefik"},
+            {"method": "GET", "path": "/api", "status_code": 500, "source": "user_log"},
+        ]
+        result = categorize_user_errors(entries)
+        assert len(result) == 2
+        assert {r["source"] for r in result} == {"traefik", "user_log"}
+
 
 class TestDetectTraefikIncidents:
     def test_detects_repeated_404(self):

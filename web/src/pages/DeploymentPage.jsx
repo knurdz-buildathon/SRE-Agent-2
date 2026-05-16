@@ -225,6 +225,7 @@ function UserErrorsTab({ data }) {
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-muted border-b border-border">
+            <th className="pb-2 pr-4">Source</th>
             <th className="pb-2 pr-4">Path</th>
             <th className="pb-2 pr-4">Method</th>
             <th className="pb-2 pr-4">Status</th>
@@ -236,6 +237,7 @@ function UserErrorsTab({ data }) {
         <tbody>
           {data.map((row, idx) => (
             <tr key={row.id || idx} className="border-b border-border/50">
+              <td className="py-2 pr-4 text-xs">{row.source || '-'}</td>
               <td className="py-2 pr-4 text-xs font-mono">{row.path}</td>
               <td className="py-2 pr-4 text-xs">{row.method}</td>
               <td className="py-2 pr-4 text-unhealthy text-xs">{row.status_code}</td>

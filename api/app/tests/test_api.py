@@ -83,6 +83,7 @@ async def test_user_errors_summary_endpoint(api_client):
     assert "top_failing_paths" in data
     assert "by_category" in data
     assert "by_status_code" in data
+    assert "by_source" in data
 
 
 @pytest.mark.asyncio

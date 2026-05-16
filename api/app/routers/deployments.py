@@ -79,7 +79,7 @@ async def get_deployment_env_issues(deployment_id: str):
 @router.get("/{deployment_id}/user-errors")
 async def get_deployment_user_errors(deployment_id: str):
     errors = await fetch_all(
-        """SELECT path, method, status_code, error_category, count, first_seen, last_seen
+        """SELECT source, path, method, status_code, error_category, count, first_seen, last_seen
         FROM user_errors
         WHERE deployment_id = ? OR deployment_id IS NULL
         ORDER BY count DESC LIMIT 50""",

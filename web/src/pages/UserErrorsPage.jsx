@@ -31,7 +31,7 @@ export default function UserErrorsPage() {
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-xl font-bold text-white">User Errors</h1>
-        <p className="text-sm text-muted">Client-facing errors detected from Traefik logs</p>
+        <p className="text-sm text-muted">Client-facing errors detected from access logs and app logs</p>
       </div>
 
       {/* Summary */}
@@ -83,6 +83,7 @@ export default function UserErrorsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-muted border-b border-border">
+                  <th className="pb-2 pr-4">Source</th>
                   <th className="pb-2 pr-4">Path</th>
                   <th className="pb-2 pr-4">Method</th>
                   <th className="pb-2 pr-4">Status</th>
@@ -94,6 +95,7 @@ export default function UserErrorsPage() {
               <tbody>
                 {errors.map((err, idx) => (
                   <tr key={err.id || idx} className="border-b border-border/50">
+                    <td className="py-2 pr-4 text-xs">{err.source || '-'}</td>
                     <td className="py-2 pr-4 text-xs font-mono max-w-xs truncate">{err.path}</td>
                     <td className="py-2 pr-4 text-xs">{err.method || '-'}</td>
                     <td className="py-2 pr-4 text-unhealthy text-xs">{err.status_code}</td>
