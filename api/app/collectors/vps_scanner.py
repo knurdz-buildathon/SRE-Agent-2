@@ -13,6 +13,8 @@ import subprocess
 from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
+from app.collectors.path_probe import select_health_url
+
 logger = logging.getLogger("sre")
 
 PROBE_HOST = os.getenv("PROBE_HOST", "host.docker.internal")
@@ -359,11 +361,11 @@ def discover_vps_deployments(docker_host_ports: Set[int]) -> List[Dict]:
         if port in SKIP_HOST_PORTS:
             continue
 
-        scheme = "https" if port in (443, 8443, 9443, 10443, 2083, 2087) else "http"
-        base_url = f"{scheme}://{PROBE_HOST}:{port}/"
-
         hostnames = all_vhosts.get(port, [])
         probe_host_header = hostnames[0] if hostnames else None
+        scheme = "https" if port in (443, 8443, 9443, 10443, 2083, 2087) else "http"
+        origin = f"{scheme}://{PROBE_HOST}:{port}"
+        base_url = select_health_url(origin, None, probe_host_header)
 
         proc = process_map.get(port, "")
         slug_base = proc or f"vps-port-{port}"

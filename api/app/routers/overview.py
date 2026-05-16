@@ -33,6 +33,13 @@ def _card_display_status(raw: Optional[str]) -> str:
     return _aggregate_bucket(raw)
 
 
+def _container_status(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    status = str(raw).strip().lower()
+    return status or None
+
+
 @router.get("/overview")
 async def get_overview():
     deployments = await fetch_all("SELECT * FROM deployments")
@@ -57,6 +64,12 @@ async def get_overview():
             "SELECT COUNT(*) as cnt FROM incidents WHERE deployment_id = ? AND status = 'open'",
             (dep["id"],),
         )
+        container_row = await fetch_one(
+            """SELECT container_state FROM container_metrics
+            WHERE deployment_id = ?
+            ORDER BY collected_at DESC LIMIT 1""",
+            (dep["id"],),
+        )
         # Calculate uptime from last 24h of checks
         uptime_row = await fetch_one(
             """SELECT
@@ -74,11 +87,21 @@ async def get_overview():
                 ok_n = int(ok_raw) if ok_raw is not None else 0
                 uptime_pct = round((ok_n / total) * 100, 1)
 
+        site_status = _card_display_status(dep.get("status"))
+        container_status = _container_status(
+            container_row.get("container_state") if container_row else None
+        )
+        display_status = container_status or site_status
+
         cards.append({
             "id": dep["id"],
             "slug": dep.get("slug", dep["id"]),
             "environment": dep.get("environment", "production"),
-            "status": _card_display_status(dep.get("status")),
+            "status": display_status,
+            "site_status": site_status,
+            "container_status": container_status,
+            "container_name": dep.get("container_name"),
+            "health_url": dep.get("health_url"),
             "uptime_percent": uptime_pct,
             "last_error": last_err.get("error_message") if last_err else None,
             "open_incidents": int((inc_row.get("cnt") if inc_row else 0) or 0),

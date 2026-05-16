@@ -4,6 +4,8 @@ import os
 import re
 from typing import List, Dict, Optional, Tuple, Set
 
+from app.collectors.path_probe import normalize_path, select_health_url
+
 logger = logging.getLogger("sre")
 
 DOCKER_SOCKET = os.getenv("DOCKER_SOCKET", "/var/run/docker.sock")
@@ -85,10 +87,14 @@ def _probe_host_from_labels(labels: dict) -> Optional[str]:
 
 def _health_path_from_labels(labels: dict) -> str:
     """Auto-discovery probe path from ``sre.health_path`` (default ``/``)."""
+    return _explicit_health_path_from_labels(labels) or "/"
+
+
+def _explicit_health_path_from_labels(labels: dict) -> Optional[str]:
     raw = (labels.get("sre.health_path") or labels.get("SRE.HEALTH_PATH") or "").strip()
     if not raw:
-        return "/"
-    return raw if raw.startswith("/") else f"/{raw}"
+        return None
+    return normalize_path(raw)
 
 
 def _monitor_label_enabled(labels: dict) -> bool:
@@ -253,8 +259,8 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
 
         for hp, cp in bindings[:MAX_AUTO_PORTS]:
             scheme = "https" if hp in (443, 8443, 9443, 10443) or cp in (443, 8443) else "http"
-            hpath = _health_path_from_labels(lbls)
-            base_url = f"{scheme}://{PROBE_HOST}:{hp}{hpath}"
+            origin = f"{scheme}://{PROBE_HOST}:{hp}"
+            base_url = select_health_url(origin, _explicit_health_path_from_labels(lbls), probe_h)
             dep_id = f"auto-{short}-{hp}"
             slug = f"{safe_slug_base}-{hp}"[:80]
 
@@ -293,8 +299,8 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
                 cp = exposed[0]
                 scheme = "https" if cp in (443, 8443, 9443) else "http"
                 host = targets[0]
-                hpath = _health_path_from_labels(lbls)
-                base_url = f"{scheme}://{host}:{cp}{hpath}"
+                origin = f"{scheme}://{host}:{cp}"
+                base_url = select_health_url(origin, _explicit_health_path_from_labels(lbls), probe_h)
                 dep_id = f"auto-{short}-int-{cp}"
                 slug = f"{safe_slug_base}-int-{cp}"[:80]
                 tcp_checks = ",".join(f"{host}:{p}" for p in exposed[:MAX_AUTO_PORTS])
