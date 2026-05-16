@@ -17,16 +17,19 @@ export default function DeploymentCard({ deployment }) {
     open_incidents,
   } = deployment;
 
-  const displayStatus = container_status || status;
-  const siteStatus = site_status || status;
+  // `status` is now the converged worst-of-all-checks status from the backend.
+  const displayStatus = status || 'unknown';
+  const siteStatus = site_status || status || 'unknown';
 
   const displayKey = typeof displayStatus === 'string' ? displayStatus.toLowerCase() : '';
   const statusColor =
     displayKey === 'up' || displayKey === 'healthy' || displayKey === 'running'
       ? 'border-l-healthy'
-      : displayKey === 'down' || displayKey === 'unhealthy' || displayKey === 'stopped' || displayKey === 'restarting'
+      : displayKey === 'down' || displayKey === 'unhealthy' || displayKey === 'stopped' || displayKey === 'restarting' || displayKey === 'dead'
         ? 'border-l-unhealthy'
-        : 'border-l-gray-600';
+        : displayKey === 'degraded' || displayKey === 'warning'
+          ? 'border-l-warn'
+          : 'border-l-gray-600';
 
   return (
     <div
@@ -47,10 +50,22 @@ export default function DeploymentCard({ deployment }) {
           <span className="text-unhealthy">{open_incidents} incident{open_incidents > 1 ? 's' : ''}</span>
         )}
       </div>
-      <div className="flex items-center gap-2 mt-3 text-xs text-muted">
-        <span>Website</span>
-        <StatusBadge status={siteStatus} />
-      </div>
+      {(site_status || container_status) && (
+        <div className="flex items-center gap-2 mt-3 text-xs text-muted">
+          {site_status && (
+            <>
+              <span>Website</span>
+              <StatusBadge status={siteStatus} />
+            </>
+          )}
+          {container_status && (
+            <>
+              <span className="ml-2">Container</span>
+              <StatusBadge status={container_status} />
+            </>
+          )}
+        </div>
+      )}
       {last_error && (
         <p className="text-xs text-unhealthy/80 mt-2 truncate">Website check: {last_error}</p>
       )}

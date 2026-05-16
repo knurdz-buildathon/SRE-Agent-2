@@ -7,30 +7,36 @@ router = APIRouter(prefix="/api", tags=["overview"])
 
 
 def _deployment_status(raw: Optional[str]) -> str:
-    """Normalize legacy healthy/unhealthy rows to up/down."""
+    """Normalize legacy healthy/unhealthy rows to up/down; also map container states."""
     if not raw:
         return "unknown"
-    r = raw.lower()
+    r = raw.lower().strip()
     if r in ("healthy", "up"):
         return "up"
     if r in ("unhealthy", "down"):
         return "down"
-    return raw
+    if r == "running":
+        return "running"
+    if r in ("stopped", "exited", "dead", "paused", "removing"):
+        return "stopped"
+    if r == "restarting":
+        return "restarting"
+    return r
 
 
 def _aggregate_bucket(raw: Optional[str]) -> str:
-    """Dashboard totals: only explicit down counts as down; running/unknown/etc. are pending."""
+    """Dashboard totals: explicit down/stopped/restarting count as down; running/up count as up."""
     s = _deployment_status(raw)
-    if s == "up":
+    if s in ("up", "running", "healthy"):
         return "up"
-    if s == "down":
+    if s in ("down", "unhealthy", "stopped", "restarting", "dead", "paused"):
         return "down"
     return "unknown"
 
 
 def _card_display_status(raw: Optional[str]) -> str:
-    """Overview cards: collapse non-terminal probe states to unknown (pending)."""
-    return _aggregate_bucket(raw)
+    """Overview cards: pass through real status so the UI can show running/stopped/restarting."""
+    return _deployment_status(raw)
 
 
 def _container_status(raw: Optional[str]) -> Optional[str]:
@@ -91,7 +97,10 @@ async def get_overview():
         container_status = _container_status(
             container_row.get("container_state") if container_row else None
         )
-        display_status = container_status or site_status
+        # For the card badge, prefer showing the converged DB status (which is already
+        # the worst of health + container + tcp + browser).  Only fall back to legacy
+        # per-field logic if the DB status is stale.
+        display_status = _card_display_status(dep.get("status"))
 
         cards.append({
             "id": dep["id"],

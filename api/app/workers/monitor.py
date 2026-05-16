@@ -49,6 +49,59 @@ def _health_failure_threshold() -> int:
     except ValueError:
         return 3
 
+
+# ── Status convergence ────────────────────────────────────────────────
+# Each check type contributes a status; the worst one wins.
+
+_STATUS_RANK = {
+    "down": 0,
+    "stopped": 1,
+    "restarting": 2,
+    "unhealthy": 3,
+    "critical": 4,
+    "degraded": 5,
+    "warning": 6,
+    "unknown": 7,
+    "up": 8,
+    "healthy": 9,
+    "running": 9,
+}
+
+
+def _worst_status(*statuses: str) -> str:
+    """Return the most severe status among the given values.
+
+    Unknown/None entries are ignored unless that's all there is.
+    """
+    ranked = []
+    for s in statuses:
+        if not s:
+            continue
+        key = str(s).strip().lower()
+        if key in _STATUS_RANK:
+            ranked.append((key, _STATUS_RANK[key]))
+        else:
+            ranked.append((key, 7))  # treat unknown spellings like "unknown"
+    if not ranked:
+        return "unknown"
+    ranked.sort(key=lambda t: t[1])
+    return ranked[0][0]
+
+
+def _container_state_to_status(state: str) -> str:
+    """Map Docker container state to a monitoring status."""
+    if not state:
+        return "unknown"
+    s = state.strip().lower()
+    if s == "running":
+        return "running"
+    if s in ("stopped", "exited", "dead", "removing", "paused"):
+        return "stopped"
+    if s == "restarting":
+        return "restarting"
+    return s
+
+
 scheduler = AsyncIOScheduler()
 
 
@@ -218,8 +271,31 @@ async def sync_deployments():
             await purge_deployment_from_db(row["id"])
 
 
+# Per-cycle status contributions keyed by deployment_id.
+# Each check phase writes its contribution; _converge_deployment_status() merges them.
+_health_statuses: dict = {}
+_container_statuses: dict = {}
+_tcp_statuses: dict = {}
+_browser_statuses: dict = {}
+
+
+async def _converge_deployment_status(deployment_id: str):
+    """Read all per-check contributions and write the worst status to DB."""
+    h = _health_statuses.get(deployment_id)
+    c = _container_statuses.get(deployment_id)
+    t = _tcp_statuses.get(deployment_id)
+    b = _browser_statuses.get(deployment_id)
+    merged = _worst_status(h, c, t, b)
+    await execute(
+        "UPDATE deployments SET status=?, last_check=? WHERE id=?",
+        (merged, datetime.utcnow().isoformat(), deployment_id),
+    )
+
+
 async def run_health_checks():
     """Run HTTP health checks for all deployments."""
+    global _health_statuses
+    _health_statuses = {}
     deployments = await fetch_all("SELECT * FROM deployments")
     need_failures = _health_failure_threshold()
 
@@ -246,7 +322,7 @@ async def run_health_checks():
         )
 
         if result.get("success"):
-            new_status = "up"
+            health_status = "up"
         else:
             recent = await fetch_all(
                 """SELECT success FROM health_checks WHERE deployment_id = ? AND check_type = 'http'
@@ -259,25 +335,24 @@ async def run_health_checks():
                     break
                 consec_fail += 1
             if consec_fail >= need_failures:
-                new_status = "down"
+                health_status = "down"
             else:
-                new_status = prev_status
+                health_status = prev_status
 
-        await execute(
-            "UPDATE deployments SET status=?, last_check=? WHERE id=?",
-            (new_status, datetime.utcnow().isoformat(), dep["id"]),
-        )
+        _health_statuses[dep["id"]] = health_status
 
         if result.get("success"):
             await detect_health_incidents(dep["id"], result)
-        elif new_status == "down" and prev_status != "down":
+        elif health_status == "down" and prev_status != "down":
             await detect_health_incidents(dep["id"], result)
 
     logger.info(f"Health checks completed for {len(deployments)} deployments")
 
 
 async def run_container_checks():
-    """Collect container metrics and detect container-related incidents."""
+    """Collect container metrics, contribute container status, and detect container-related incidents."""
+    global _container_statuses
+    _container_statuses = {}
     if DEMO_MODE:
         from app.workers.demo import run_demo_container_checks
         await run_demo_container_checks()
@@ -297,6 +372,7 @@ async def run_container_checks():
                 suggested_fix=SUGGESTED_FIXES["docker_socket_failure"],
                 fingerprint=make_fingerprint(dep["id"], "docker_socket_failure"),
             )
+            _container_statuses[dep["id"]] = "unknown"
             continue
 
         await execute(
@@ -319,6 +395,10 @@ async def run_container_checks():
             ),
         )
 
+        _container_statuses[dep["id"]] = _container_state_to_status(
+            metrics.get("container_state", "")
+        )
+
         await detect_container_incidents(dep["id"], metrics)
 
     logger.info(f"Container checks completed for {len(deployments)} deployments")
@@ -326,6 +406,8 @@ async def run_container_checks():
 
 async def run_tcp_checks_worker():
     """Run TCP checks for all deployments with tcp_checks configured."""
+    global _tcp_statuses
+    _tcp_statuses = {}
     deployments = await fetch_all("SELECT * FROM deployments WHERE tcp_checks IS NOT NULL AND tcp_checks != ''")
 
     for dep in deployments:
@@ -348,6 +430,9 @@ async def run_tcp_checks_worker():
                 ),
             )
 
+        all_ok = all(r["success"] for r in results) if results else True
+        _tcp_statuses[dep["id"]] = "up" if all_ok else "down"
+
         await detect_tcp_incidents(dep["id"], results)
 
     logger.info(f"TCP checks completed for {len(deployments)} deployments")
@@ -355,6 +440,8 @@ async def run_tcp_checks_worker():
 
 async def run_browser_checks():
     """Run browser checks for all deployments with browser_url configured."""
+    global _browser_statuses
+    _browser_statuses = {}
     deployments = await fetch_all("SELECT * FROM deployments WHERE browser_url IS NOT NULL AND browser_url != ''")
 
     for dep in deployments:
@@ -378,6 +465,15 @@ async def run_browser_checks():
                 datetime.utcnow().isoformat(),
             ),
         )
+
+        if result.get("success"):
+            _browser_statuses[dep["id"]] = "up"
+        elif result.get("page_blank"):
+            _browser_statuses[dep["id"]] = "down"
+        elif not result.get("selector_found"):
+            _browser_statuses[dep["id"]] = "degraded"
+        else:
+            _browser_statuses[dep["id"]] = "down"
 
         await detect_browser_incidents(dep["id"], result, dep.get("expected_selector", ""))
 
@@ -554,7 +650,7 @@ async def run_user_log_checks():
 
 
 async def run_all_checks():
-    """Run all monitoring checks."""
+    """Run all monitoring checks, then converge per-deployment status."""
     try:
         await sync_deployments()
     except Exception as e:
@@ -590,12 +686,20 @@ async def run_all_checks():
     except Exception as e:
         logger.error(f"run_user_log_checks failed: {e}")
 
-    # Browser checks are less frequent - run every other cycle
-    # (they're slow and resource-intensive)
     try:
         await run_browser_checks()
     except Exception as e:
         logger.error(f"run_browser_checks failed: {e}")
+
+    # ── Converge status from all check contributions ──
+    try:
+        all_ids = set(_health_statuses) | set(_container_statuses) | set(_tcp_statuses) | set(_browser_statuses)
+        for dep_id in all_ids:
+            await _converge_deployment_status(dep_id)
+        if all_ids:
+            logger.info(f"Converged status for {len(all_ids)} deployment(s)")
+    except Exception as e:
+        logger.error(f"Status convergence failed: {e}")
 
 
 def start_scheduler():
