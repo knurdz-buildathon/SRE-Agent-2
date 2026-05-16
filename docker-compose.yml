@@ -1,0 +1,73 @@
+version: "3.8"
+
+services:
+  sre-agent-api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: sre-agent-api
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - sre-data:/data
+      - ./traefik-logs:/traefik-logs:ro
+    environment:
+      - DATABASE_PATH=/data/sre.db
+      - TRAEFIK_LOG_DIR=/traefik-logs
+      - DOCKER_SOCKET=/var/run/docker.sock
+      - CHECK_INTERVAL=30
+      - DASHBOARD_USER=admin
+      - DASHBOARD_PASS=admin
+      - DEMO_MODE=true
+    labels:
+      sre.monitor: "true"
+      sre.slug: "sre-agent-api"
+      sre.environment: "production"
+    ports:
+      - "8777:8000"
+
+  sre-agent-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: sre-agent-web
+    restart: unless-stopped
+    ports:
+      - "3111:80"
+    depends_on:
+      - sre-agent-api
+
+  sample-healthy:
+    build:
+      context: ./sample-healthy
+      dockerfile: Dockerfile
+    container_name: sample-healthy-app
+    restart: unless-stopped
+    labels:
+      sre.monitor: "true"
+      sre.slug: "sample-healthy"
+      sre.environment: "production"
+      sre.health_url: "http://sample-healthy-app:8080/health"
+      sre.browser_url: "http://sample-healthy-app:8080"
+      sre.expected_selector: "#app"
+      sre.tcp_checks: "sample-healthy-app:8080"
+    ports:
+      - "8081:8080"
+
+  sample-crash:
+    build:
+      context: ./sample-crash
+      dockerfile: Dockerfile
+    container_name: sample-crash-app
+    restart: unless-stopped
+    labels:
+      sre.monitor: "true"
+      sre.slug: "sample-crash"
+      sre.environment: "production"
+      sre.health_url: "http://sample-crash-app:3000/health"
+      sre.browser_url: "http://sample-crash-app:3000"
+      sre.expected_selector: "#root"
+      sre.tcp_checks: "sample-crash-app:3000"
+
+volumes:
+  sre-data:
