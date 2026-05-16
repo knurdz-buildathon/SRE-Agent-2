@@ -45,7 +45,7 @@ async def get_overview():
     incident_row = await fetch_one(
         "SELECT COUNT(*) as cnt FROM incidents WHERE status = 'open'"
     )
-    open_incidents = incident_row["cnt"] if incident_row else 0
+    open_incidents = int((incident_row.get("cnt") if incident_row else 0) or 0)
 
     cards = []
     for dep in deployments:
@@ -67,8 +67,12 @@ async def get_overview():
             (dep["id"],),
         )
         uptime_pct = None
-        if uptime_row and uptime_row["total"] and uptime_row["total"] > 0:
-            uptime_pct = round((uptime_row["ok"] / uptime_row["total"]) * 100, 1)
+        if uptime_row:
+            total = uptime_row.get("total") or 0
+            ok_raw = uptime_row.get("ok")
+            if total > 0:
+                ok_n = int(ok_raw) if ok_raw is not None else 0
+                uptime_pct = round((ok_n / total) * 100, 1)
 
         cards.append({
             "id": dep["id"],
@@ -76,15 +80,15 @@ async def get_overview():
             "environment": dep.get("environment", "production"),
             "status": _card_display_status(dep.get("status")),
             "uptime_percent": uptime_pct,
-            "last_error": last_err["error_message"] if last_err else None,
-            "open_incidents": inc_row["cnt"] if inc_row else 0,
+            "last_error": last_err.get("error_message") if last_err else None,
+            "open_incidents": int((inc_row.get("cnt") if inc_row else 0) or 0),
         })
 
     return {
         "total_deployments": len(deployments),
         "up_count": up,
         "down_count": down,
-        "unknown_count": unknown,
+        "unknown_count": int(unknown),
         "open_incidents": open_incidents,
         "deployments": cards,
     }

@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   sre-agent-api:
     build:
@@ -36,6 +34,12 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
 
   sre-agent-web:
     build:
@@ -46,7 +50,8 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - sre-agent-api
+      sre-agent-api:
+        condition: service_healthy
 
   sample-healthy:
     profiles:

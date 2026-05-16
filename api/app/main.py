@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -75,12 +76,15 @@ async def startup():
         except Exception as e:
             logger.warning(f"Demo seed failed: {e}")
 
-    # Run initial check immediately
-    logger.info("Running initial monitoring check...")
-    try:
-        await run_all_checks()
-    except Exception as e:
-        logger.error(f"Initial check failed: {e}")
+    # Run initial check in background so HTTP routes (e.g. /api/overview) are available immediately.
+    logger.info("Scheduling initial monitoring check in background...")
+    async def _initial_checks():
+        try:
+            await run_all_checks()
+        except Exception as e:
+            logger.error(f"Initial check failed: {e}")
+
+    asyncio.create_task(_initial_checks())
 
     # Start background scheduler
     start_scheduler()
