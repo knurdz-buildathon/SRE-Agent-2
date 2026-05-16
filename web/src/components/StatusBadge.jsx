@@ -1,7 +1,25 @@
 import React from 'react';
 
+const DISPLAY = {
+  up: 'Up',
+  down: 'Down',
+  healthy: 'Up',
+  unhealthy: 'Down',
+  warning: 'Warning',
+  degraded: 'Degraded',
+  critical: 'Critical',
+  open: 'Open',
+  resolved: 'Resolved',
+  running: 'Running',
+  restarting: 'Restarting',
+  stopped: 'Stopped',
+  unknown: 'Unknown',
+};
+
 export default function StatusBadge({ status }) {
   const config = {
+    up: 'bg-healthy/15 text-healthy border-healthy/30',
+    down: 'bg-unhealthy/15 text-unhealthy border-unhealthy/30',
     healthy: 'bg-healthy/15 text-healthy border-healthy/30',
     unhealthy: 'bg-unhealthy/15 text-unhealthy border-unhealthy/30',
     warning: 'bg-warn/15 text-warn border-warn/30',
@@ -15,11 +33,14 @@ export default function StatusBadge({ status }) {
     unknown: 'bg-gray-600/20 text-muted border-gray-600/30',
   };
 
-  const cls = config[status] || config.unknown;
+  const key = typeof status === 'string' ? status.toLowerCase() : '';
+  const cls = config[key] || config.unknown;
+
+  const label = DISPLAY[key] || status || 'Unknown';
 
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${cls}`}>
-      {status || 'unknown'}
+      {label}
     </span>
   );
 }

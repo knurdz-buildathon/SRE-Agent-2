@@ -43,8 +43,8 @@ async def test_overview_endpoint(api_client):
     assert response.status_code == 200
     data = response.json()
     assert "total_deployments" in data
-    assert "healthy_count" in data
-    assert "unhealthy_count" in data
+    assert "up_count" in data
+    assert "down_count" in data
     assert "open_incidents" in data
     assert "deployments" in data
     assert isinstance(data["deployments"], list)

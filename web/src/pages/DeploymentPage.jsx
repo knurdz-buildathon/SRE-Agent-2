@@ -121,7 +121,7 @@ function HealthTab({ data }) {
               </td>
               <td className="py-2 pr-4">{row.check_type}</td>
               <td className="py-2 pr-4">
-                <StatusBadge status={row.success ? 'healthy' : 'unhealthy'} />
+                <StatusBadge status={row.success ? 'up' : 'down'} />
               </td>
               <td className="py-2 pr-4">
                 {row.response_time_ms !== null ? `${row.response_time_ms}ms` : '-'}

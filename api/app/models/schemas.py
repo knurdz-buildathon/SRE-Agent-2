@@ -125,8 +125,8 @@ class DockerSizesBase(BaseModel):
 
 class OverviewResponse(BaseModel):
     total_deployments: int = 0
-    healthy_count: int = 0
-    unhealthy_count: int = 0
+    up_count: int = 0
+    down_count: int = 0
     open_incidents: int = 0
     deployments: List[dict] = []
 

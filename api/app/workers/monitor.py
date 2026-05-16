@@ -132,7 +132,7 @@ async def run_health_checks():
             ),
         )
 
-        new_status = "healthy" if result.get("success") else "unhealthy"
+        new_status = "up" if result.get("success") else "down"
         await execute(
             "UPDATE deployments SET status=?, last_check=? WHERE id=?",
             (new_status, datetime.utcnow().isoformat(), dep["id"]),

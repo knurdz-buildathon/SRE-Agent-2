@@ -19,7 +19,7 @@ DEMO_DEPLOYMENTS = [
         "container_id": "demo-healthy-id",
         "container_name": "sample-healthy-app",
         "image": "sample-healthy:latest",
-        "status": "healthy",
+        "status": "up",
     },
     {
         "id": "sample-crash",
@@ -33,7 +33,7 @@ DEMO_DEPLOYMENTS = [
         "container_id": "demo-crash-id",
         "container_name": "sample-crash-app",
         "image": "sample-crash:latest",
-        "status": "unhealthy",
+        "status": "down",
     },
     {
         "id": "sample-api",
@@ -47,7 +47,7 @@ DEMO_DEPLOYMENTS = [
         "container_id": "demo-api-id",
         "container_name": "sample-api",
         "image": "api-service:v2.1",
-        "status": "healthy",
+        "status": "up",
     },
 ]
 

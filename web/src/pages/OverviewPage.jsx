@@ -38,7 +38,7 @@ export default function OverviewPage() {
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-xl font-bold text-white">Overview</h1>
-        <p className="text-sm text-muted">System status at a glance</p>
+        <p className="text-sm text-muted">Website availability at a glance</p>
       </div>
 
       {/* Summary metrics */}
@@ -49,13 +49,13 @@ export default function OverviewPage() {
           color="text-white"
         />
         <MetricCard
-          title="Healthy"
-          value={data.healthy_count}
+          title="Up"
+          value={data.up_count}
           color="text-healthy"
         />
         <MetricCard
-          title="Unhealthy"
-          value={data.unhealthy_count}
+          title="Down"
+          value={data.down_count}
           color="text-unhealthy"
         />
         <MetricCard
@@ -69,7 +69,7 @@ export default function OverviewPage() {
       <div>
         <h2 className="text-sm font-semibold text-gray-300 mb-3">Deployments</h2>
         {data.deployments.length === 0 ? (
-          <p className="text-muted text-sm">No deployments found. Add sre.monitor=true labels to your Docker containers.</p>
+          <p className="text-muted text-sm">No deployments found. Published Docker ports are auto-discovered; optionally add sre.monitor labels for custom URLs.</p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {data.deployments.map((dep) => (

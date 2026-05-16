@@ -1,15 +1,30 @@
 from fastapi import APIRouter
+from typing import Optional
+
 from app.models.database import fetch_all, fetch_one
 
 router = APIRouter(prefix="/api", tags=["overview"])
+
+
+def _deployment_status(raw: Optional[str]) -> str:
+    """Normalize legacy healthy/unhealthy rows to up/down."""
+    if not raw:
+        return "unknown"
+    r = raw.lower()
+    if r in ("healthy", "up"):
+        return "up"
+    if r in ("unhealthy", "down"):
+        return "down"
+    return raw
 
 
 @router.get("/overview")
 async def get_overview():
     deployments = await fetch_all("SELECT * FROM deployments")
 
-    healthy = sum(1 for d in deployments if d.get("status") == "healthy")
-    unhealthy = sum(1 for d in deployments if d.get("status") != "healthy")
+    norm = [_deployment_status(d.get("status")) for d in deployments]
+    up = sum(1 for s in norm if s == "up")
+    down = sum(1 for s in norm if s != "up")
 
     incident_row = await fetch_one(
         "SELECT COUNT(*) as cnt FROM incidents WHERE status = 'open'"
@@ -43,7 +58,7 @@ async def get_overview():
             "id": dep["id"],
             "slug": dep.get("slug", dep["id"]),
             "environment": dep.get("environment", "production"),
-            "status": dep.get("status", "unknown"),
+            "status": _deployment_status(dep.get("status")),
             "uptime_percent": uptime_pct,
             "last_error": last_err["error_message"] if last_err else None,
             "open_incidents": inc_row["cnt"] if inc_row else 0,
@@ -51,8 +66,8 @@ async def get_overview():
 
     return {
         "total_deployments": len(deployments),
-        "healthy_count": healthy,
-        "unhealthy_count": unhealthy,
+        "up_count": up,
+        "down_count": down,
         "open_incidents": open_incidents,
         "deployments": cards,
     }

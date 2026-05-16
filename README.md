@@ -162,7 +162,7 @@ Incidents are **deduplicated** by deployment + category + fingerprint. If an iss
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/overview` | Total deployments, healthy/unhealthy counts, open incidents |
+| GET | `/api/overview` | Total deployments, up/down counts, open incidents |
 | GET | `/api/deployments/{id}/health?limit=50` | Health check history |
 | GET | `/api/deployments/{id}/errors` | Failed health checks |
 | GET | `/api/deployments/{id}/stats?hours=24` | Resource usage metrics |
@@ -178,7 +178,7 @@ Incidents are **deduplicated** by deployment + category + fingerprint. If an iss
 
 ## Dashboard Pages
 
-1. **Overview** — Total deployments, healthy/unhealthy counts, open incidents, deployment cards with status and uptime
+1. **Overview** — Total deployments, up/down counts, open incidents, deployment cards with status and uptime
 2. **Deployment Detail** — Health checks, errors, resource charts (CPU/memory), uptime bar chart, env issues, user errors
 3. **Incidents** — Filterable incident list with severity badges, suggested fixes, click for timeline detail
 4. **Infrastructure** — VPS info, Docker disk usage, CPU/memory bars per deployment, container list

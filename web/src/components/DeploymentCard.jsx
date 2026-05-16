@@ -6,7 +6,10 @@ export default function DeploymentCard({ deployment }) {
   const navigate = useNavigate();
   const { id, slug, environment, status, uptime_percent, last_error, open_incidents } = deployment;
 
-  const statusColor = status === 'healthy' ? 'border-l-healthy' : 'border-l-unhealthy';
+  const statusColor =
+    status === 'up' || status === 'healthy'
+      ? 'border-l-healthy'
+      : 'border-l-unhealthy';
 
   return (
     <div
