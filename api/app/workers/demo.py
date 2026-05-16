@@ -62,13 +62,14 @@ async def seed_demo_deployments():
             await execute(
                 """INSERT INTO deployments
                     (id, slug, environment, git_url, health_url, browser_url,
-                     expected_selector, tcp_checks, container_id, container_name,
+                     expected_selector, tcp_checks, probe_host_header, container_id, container_name,
                      image, status, last_check)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     dep["id"], dep["slug"], dep["environment"], dep["git_url"],
                     dep["health_url"], dep["browser_url"], dep["expected_selector"],
-                    dep["tcp_checks"], dep["container_id"], dep["container_name"],
+                    dep["tcp_checks"], None,
+                    dep["container_id"], dep["container_name"],
                     dep["image"], dep["status"], datetime.utcnow().isoformat(),
                 ),
             )

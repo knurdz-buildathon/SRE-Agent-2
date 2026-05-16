@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS deployments (
     image TEXT,
     status TEXT DEFAULT 'unknown',
     last_check TEXT,
+    probe_host_header TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -173,8 +174,20 @@ async def init_db():
         await db.executescript(SCHEMA)
         await db.commit()
         logger.info("Database schema initialized")
+        await migrate_deployments_schema(db)
+        await db.commit()
     finally:
         await db.close()
+
+
+async def migrate_deployments_schema(db: aiosqlite.Connection):
+    """Add columns introduced after first release (SQLite has limited ALTER)."""
+    cursor = await db.execute("PRAGMA table_info(deployments)")
+    rows = await cursor.fetchall()
+    colnames = {row[1] for row in rows}
+    if "probe_host_header" not in colnames:
+        await db.execute("ALTER TABLE deployments ADD COLUMN probe_host_header TEXT")
+        logger.info("Migration: deployments.probe_host_header added")
 
 
 async def execute(query: str, params=(), commit: bool = True):

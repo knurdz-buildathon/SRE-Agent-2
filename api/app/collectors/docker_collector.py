@@ -1,6 +1,7 @@
 import docker
 import logging
 import os
+import re
 from typing import List, Dict, Optional, Tuple, Set
 
 logger = logging.getLogger("sre")
@@ -48,6 +49,38 @@ HTTP_PRIORITY = (
 
 MAX_AUTO_PORTS = int(os.getenv("AUTO_DISCOVER_MAX_PORTS_PER_CONTAINER", "12"))
 AUTO_DISCOVER_ORPHANS = os.getenv("AUTO_DISCOVER_ORPHANS", "false").lower() == "true"
+
+_TRAEFIK_HOST_RES = [
+    re.compile(r"Host\s*\(\s*`([^`]+)`", re.I),
+    re.compile(r'Host\s*\(\s*"([^"]+)"', re.I),
+    re.compile(r"Host\s*\(\s*'([^']+)'", re.I),
+]
+
+
+def extract_traefik_host(labels: Optional[dict]) -> Optional[str]:
+    """Parse Host(`domain`) from Traefik Docker labels (v2/v3)."""
+    if not labels:
+        return None
+    for key, val in labels.items():
+        kl = key.lower()
+        if "traefik" not in kl or "rule" not in kl:
+            continue
+        if not isinstance(val, str):
+            continue
+        for rx in _TRAEFIK_HOST_RES:
+            m = rx.search(val)
+            if m:
+                host = m.group(1).strip()
+                if host:
+                    return host
+    return None
+
+
+def _probe_host_from_labels(labels: dict) -> Optional[str]:
+    explicit = (labels.get("sre.probe_host") or labels.get("SRE.PROBE_HOST") or "").strip()
+    if explicit:
+        return explicit
+    return extract_traefik_host(labels)
 
 
 def _monitor_label_enabled(labels: dict) -> bool:
@@ -187,6 +220,8 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
             continue
 
         attrs = container.attrs
+        lbls = attrs.get("Config", {}).get("Labels") or {}
+        probe_h = _probe_host_from_labels(lbls)
         name = (attrs.get("Name") or "").lstrip("/")
         if name in AUTO_DISCOVER_SKIP_CONTAINERS:
             continue
@@ -224,6 +259,7 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
                     "browser_url": base_url if AUTO_BROWSER_AUTO else None,
                     "expected_selector": None,
                     "tcp_checks": tcp_checks,
+                    "probe_host_header": probe_h,
                     "container_id": container.id,
                     "container_name": name,
                     "image": image_short,
@@ -258,6 +294,7 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
                         "browser_url": base_url if AUTO_BROWSER_AUTO else None,
                         "expected_selector": None,
                         "tcp_checks": tcp_checks,
+                        "probe_host_header": probe_h,
                         "container_id": container.id,
                         "container_name": name,
                         "image": image_short,
@@ -281,6 +318,7 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
                 "browser_url": None,
                 "expected_selector": None,
                 "tcp_checks": None,
+                "probe_host_header": probe_h,
                 "container_id": container.id,
                 "container_name": name,
                 "image": image_short,
@@ -313,6 +351,7 @@ def discover_deployments() -> Tuple[List[Dict], bool]:
             if not _monitor_label_enabled(labels):
                 continue
             slug = labels.get("sre.slug") or labels.get("SRE.SLUG") or container.name.lstrip("/")
+            probe_host = _probe_host_from_labels(labels)
             labeled.append(
                 {
                     "id": slug,
@@ -326,6 +365,7 @@ def discover_deployments() -> Tuple[List[Dict], bool]:
                     "expected_selector": labels.get("sre.expected_selector")
                     or labels.get("SRE.EXPECTED_SELECTOR"),
                     "tcp_checks": labels.get("sre.tcp_checks") or labels.get("SRE.TCP_CHECKS"),
+                    "probe_host_header": probe_host,
                     "container_id": container.id,
                     "container_name": container.name.lstrip("/"),
                     "image": str(container.image.tags[0])

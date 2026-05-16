@@ -39,6 +39,14 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 scheduler = AsyncIOScheduler()
 
 
+def _probe_host_header(dep: dict):
+    h = dep.get("probe_host_header")
+    if h is None:
+        return None
+    s = str(h).strip()
+    return s or None
+
+
 async def purge_deployment_from_db(deployment_id: str):
     """Remove deployment row and dependent metrics (SQLite has no FK CASCADE)."""
     await execute(
@@ -74,12 +82,13 @@ async def sync_deployments():
             await execute(
                 """UPDATE deployments SET
                     slug=?, environment=?, git_url=?, health_url=?, browser_url=?,
-                    expected_selector=?, tcp_checks=?, container_id=?, container_name=?,
+                    expected_selector=?, tcp_checks=?, probe_host_header=?, container_id=?, container_name=?,
                     image=?, status=?, last_check=?
                 WHERE id=?""",
                 (
                     dep["slug"], dep["environment"], dep["git_url"], dep["health_url"],
                     dep["browser_url"], dep["expected_selector"], dep["tcp_checks"],
+                    dep.get("probe_host_header"),
                     dep["container_id"], dep["container_name"], dep["image"],
                     dep["status"], datetime.utcnow().isoformat(), dep["id"],
                 ),
@@ -88,13 +97,14 @@ async def sync_deployments():
             await execute(
                 """INSERT INTO deployments
                     (id, slug, environment, git_url, health_url, browser_url,
-                     expected_selector, tcp_checks, container_id, container_name,
+                     expected_selector, tcp_checks, probe_host_header, container_id, container_name,
                      image, status, last_check)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     dep["id"], dep["slug"], dep["environment"], dep["git_url"],
                     dep["health_url"], dep["browser_url"], dep["expected_selector"],
-                    dep["tcp_checks"], dep["container_id"], dep["container_name"],
+                    dep["tcp_checks"], dep.get("probe_host_header"),
+                    dep["container_id"], dep["container_name"],
                     dep["image"], dep["status"], datetime.utcnow().isoformat(),
                 ),
             )
@@ -117,7 +127,7 @@ async def run_health_checks():
         if not health_url:
             continue
 
-        result = await http_health_check(health_url)
+        result = await http_health_check(health_url, _probe_host_header(dep))
 
         await execute(
             """INSERT INTO health_checks (deployment_id, check_type, status_code, response_time_ms, success, error_message, checked_at)

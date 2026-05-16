@@ -1,6 +1,10 @@
 """Tests for Docker auto-discovery helpers."""
 import pytest
-from app.collectors.docker_collector import extract_tcp_host_bindings, extract_exposed_tcp_ports
+from app.collectors.docker_collector import (
+    extract_tcp_host_bindings,
+    extract_exposed_tcp_ports,
+    extract_traefik_host,
+)
 
 
 class TestExtractTcpHostBindings:
@@ -47,6 +51,21 @@ class TestExtractTcpHostBindings:
             "HostConfig": {"PortBindings": {}},
         }
         assert extract_tcp_host_bindings(attrs) == []
+
+
+class TestExtractTraefikHost:
+    def test_host_backticks(self):
+        labels = {
+            "traefik.http.routers.myapp.rule": "Host(`app.example.com`) && PathPrefix(`/`)",
+        }
+        assert extract_traefik_host(labels) == "app.example.com"
+
+    def test_host_double_quotes(self):
+        labels = {"traefik.http.routers.web.rule": 'Host("www.example.org")'}
+        assert extract_traefik_host(labels) == "www.example.org"
+
+    def test_no_rule(self):
+        assert extract_traefik_host({"traefik.enable": "true"}) is None
 
 
 class TestExtractExposedTcpPorts:

@@ -57,6 +57,10 @@ Containers already labeled are **not** duplicated by auto-scan.
 
 For overrides per site, **`sre.health_url` / `sre.browser_url`** on labeled stacks still apply (**URLs must work from inside `sre-agent-api`** — public HTTPS through Traefik, or shared Docker DNS).
 
+**Sites show “down” but work in a browser**
+
+Auto-discovery probes **`host.docker.internal:<port>`** without the browser’s hostname. Reverse proxies (Traefik, Nginx) often route by **`Host`**, so the agent sets it automatically when it finds **`traefik.http.routers.*.rule`** with **`Host(\`your.domain\`)`**, or when you set **`sre.probe_host`** / **`SRE.PROBE_HOST`** on the container. If TLS terminates on the edge and plain HTTP fails, enable **`HTTP_TRY_HTTPS_FALLBACK=true`** (default). For edges that always return **403/401** to probes but are otherwise healthy, set **`HTTP_AVAILABILITY_MODE=reachable`** so any HTTP status counts as **up** (incidents for real outages still use timeouts and connection failures). **`HTTP_VERIFY_SSL=false`** only if you use self-signed certs and accept MITM risk inside the agent.
+
 - Mount Traefik access logs into **`./traefik-logs`** so **User Errors** come from **live logs**, not samples.
 - If Docker discovery succeeds, deployments **removed from Docker** are **purged from SQLite** (with related checks/incidents). To erase all stored history: `docker compose down -v`.
 
@@ -104,6 +108,7 @@ services:
 | `sre.browser_url` | No | URL for Playwright browser checks |
 | `sre.expected_selector` | No | CSS selector expected on the page |
 | `sre.tcp_checks` | No | Comma-separated `host:port` pairs for TCP checks |
+| `sre.probe_host` | No | **`Host`** header for HTTP health checks (when probing by IP/`host.docker.internal`) |
 
 ## What Gets Monitored
 
