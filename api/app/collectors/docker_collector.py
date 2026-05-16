@@ -83,6 +83,14 @@ def _probe_host_from_labels(labels: dict) -> Optional[str]:
     return extract_traefik_host(labels)
 
 
+def _health_path_from_labels(labels: dict) -> str:
+    """Auto-discovery probe path from ``sre.health_path`` (default ``/``)."""
+    raw = (labels.get("sre.health_path") or labels.get("SRE.HEALTH_PATH") or "").strip()
+    if not raw:
+        return "/"
+    return raw if raw.startswith("/") else f"/{raw}"
+
+
 def _monitor_label_enabled(labels: dict) -> bool:
     """Accept common truthy label spellings from Compose / Swarm."""
     if not labels:
@@ -242,7 +250,8 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
 
         for hp, cp in bindings[:MAX_AUTO_PORTS]:
             scheme = "https" if hp in (443, 8443, 9443, 10443) or cp in (443, 8443) else "http"
-            base_url = f"{scheme}://{PROBE_HOST}:{hp}/"
+            hpath = _health_path_from_labels(lbls)
+            base_url = f"{scheme}://{PROBE_HOST}:{hp}{hpath}"
             dep_id = f"auto-{short}-{hp}"
             slug = f"{safe_slug_base}-{hp}"[:80]
 
@@ -281,7 +290,8 @@ def discover_auto_deployments(client, labeled_container_ids: Set[str], container
                 cp = exposed[0]
                 scheme = "https" if cp in (443, 8443, 9443) else "http"
                 host = targets[0]
-                base_url = f"{scheme}://{host}:{cp}/"
+                hpath = _health_path_from_labels(lbls)
+                base_url = f"{scheme}://{host}:{cp}{hpath}"
                 dep_id = f"auto-{short}-int-{cp}"
                 slug = f"{safe_slug_base}-int-{cp}"[:80]
                 tcp_checks = ",".join(f"{host}:{p}" for p in exposed[:MAX_AUTO_PORTS])

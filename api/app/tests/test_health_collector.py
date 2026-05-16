@@ -1,6 +1,20 @@
 """Tests for the health check collector."""
 import pytest
+from app.collectors import health_collector as hc
 from app.collectors.health_collector import http_health_check, tcp_check, run_tcp_checks
+
+
+class TestExpandProbeCandidates:
+    def test_non_root_url_no_extra_paths(self):
+        assert hc._expand_probe_candidates("http://x:8080/api/health") == [
+            "http://x:8080/api/health"
+        ]
+
+    def test_root_url_includes_fallback_paths(self):
+        out = hc._expand_probe_candidates("http://x:8080/")
+        assert out[0] == "http://x:8080/"
+        assert "http://x:8080/health" in out
+        assert len(out) >= 2
 
 
 class TestHTTPHealthCheck:

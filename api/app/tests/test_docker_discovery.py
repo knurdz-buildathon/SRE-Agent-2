@@ -4,6 +4,7 @@ from app.collectors.docker_collector import (
     extract_tcp_host_bindings,
     extract_exposed_tcp_ports,
     extract_traefik_host,
+    _health_path_from_labels,
 )
 
 
@@ -51,6 +52,17 @@ class TestExtractTcpHostBindings:
             "HostConfig": {"PortBindings": {}},
         }
         assert extract_tcp_host_bindings(attrs) == []
+
+
+class TestHealthPathFromLabels:
+    def test_default_slash(self):
+        assert _health_path_from_labels({}) == "/"
+
+    def test_explicit_relative(self):
+        assert _health_path_from_labels({"sre.health_path": "health"}) == "/health"
+
+    def test_explicit_absolute(self):
+        assert _health_path_from_labels({"SRE.HEALTH_PATH": "/api/ready"}) == "/api/ready"
 
 
 class TestExtractTraefikHost:

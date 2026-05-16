@@ -62,6 +62,8 @@ For overrides per site, **`sre.health_url` / `sre.browser_url`** on labeled stac
 
 Auto-discovery probes **`host.docker.internal:<port>`** without the browser’s hostname. Reverse proxies (Traefik, Nginx) often route by **`Host`**, so the agent sets it automatically when it finds **`traefik.http.routers.*.rule`** with **`Host(\`your.domain\`)`**, **`sre.probe_host`**, or a match from **VPS Nginx/Apache vhost parsing**. If TLS terminates on the edge and plain HTTP fails, **`HTTP_TRY_HTTPS_FALLBACK=true`** (default) retries HTTPS. Default **`HTTP_AVAILABILITY_MODE=reachable`** treats **any HTTP status** as **up** (timeouts and connection failures still **down**). Use **`strict`** only if you want **2xx–3xx** required. **`HTTP_VERIFY_SSL=false`** only if you accept MITM risk for self-signed certs inside the agent.
 
+**Wrong probe URL (common with auto-discovery)** Auto-discovery uses **`/`** unless you set **`sre.health_path`** on the service (e.g. `/health`). Independently, **`HTTP_PROBE_FALLBACK_PATHS`** tries extra paths on the **same origin** when the configured URL’s path is **`/`** — useful if the app exposes **`/health`** but not **`/`**.
+
 **VPS scan mounts**
 
 The API service mounts **`/etc`**, **`/proc`**, **`/usr`**, **`/var`** from the host read-only (`/host-etc`, `/host-proc`, …). Disable with **`VPS_SCAN_ENABLED=false`** if you do not want those paths visible inside the container.
@@ -114,6 +116,7 @@ services:
 | `sre.expected_selector` | No | CSS selector expected on the page |
 | `sre.tcp_checks` | No | Comma-separated `host:port` pairs for TCP checks |
 | `sre.probe_host` | No | **`Host`** header for HTTP health checks (when probing by IP/`host.docker.internal`) |
+| `sre.health_path` | No | HTTP path for **auto-discovered** services only (default `/`). Example: `/health` — avoids wrong probes when the app has no `/` |
 
 ## What Gets Monitored
 
@@ -328,4 +331,6 @@ sre-agent/
 | `HTTP_AVAILABILITY_MODE` | `reachable` | `reachable` = any HTTP status is up; `strict` = 2xx–3xx |
 | `HTTP_TRY_HTTPS_FALLBACK` | `true` | Retry `http://` probes as `https://` on TLS/conn errors |
 | `HTTP_VERIFY_SSL` | `true` | Set `false` for self-signed (reduces assurance) |
+| `HTTP_PROBE_TRY_FALLBACK_PATHS` | `true` | For `/` URLs, try `HTTP_PROBE_FALLBACK_PATHS` on same origin |
+| `HTTP_PROBE_FALLBACK_PATHS` | see `.env.example` | Comma-separated paths (e.g. `/health,/healthz,...`) |
 
