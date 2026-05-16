@@ -39,6 +39,22 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 scheduler = AsyncIOScheduler()
 
 
+async def purge_deployment_from_db(deployment_id: str):
+    """Remove deployment row and dependent metrics (SQLite has no FK CASCADE)."""
+    await execute(
+        "DELETE FROM incident_timeline WHERE incident_id IN (SELECT id FROM incidents WHERE deployment_id = ?)",
+        (deployment_id,),
+    )
+    await execute("DELETE FROM incidents WHERE deployment_id = ?", (deployment_id,))
+    await execute("DELETE FROM health_checks WHERE deployment_id = ?", (deployment_id,))
+    await execute("DELETE FROM tcp_checks WHERE deployment_id = ?", (deployment_id,))
+    await execute("DELETE FROM browser_checks WHERE deployment_id = ?", (deployment_id,))
+    await execute("DELETE FROM container_metrics WHERE deployment_id = ?", (deployment_id,))
+    await execute("DELETE FROM traefik_logs WHERE deployment_id = ?", (deployment_id,))
+    await execute("DELETE FROM user_errors WHERE deployment_id = ?", (deployment_id,))
+    await execute("DELETE FROM deployments WHERE id = ?", (deployment_id,))
+
+
 async def sync_deployments():
     """Discover Docker deployments and upsert into DB."""
     if DEMO_MODE:
@@ -46,7 +62,12 @@ async def sync_deployments():
         await seed_demo_deployments()
         return
 
-    deployments = discover_deployments()
+    deployments, docker_ok = discover_deployments()
+    if not docker_ok:
+        logger.warning("Docker discovery unavailable; keeping existing deployment rows in SQLite")
+        return
+
+    discovered_ids = {d["id"] for d in deployments}
     for dep in deployments:
         existing = await fetch_one("SELECT id FROM deployments WHERE id = ?", (dep["id"],))
         if existing:
@@ -77,7 +98,14 @@ async def sync_deployments():
                     dep["image"], dep["status"], datetime.utcnow().isoformat(),
                 ),
             )
-    logger.info(f"Synced {len(deployments)} deployments")
+    logger.info(f"Synced {len(deployments)} deployment(s) from Docker labels")
+
+    # Remove SQLite rows for containers that no longer have sre.monitor / were removed
+    stored = await fetch_all("SELECT id FROM deployments")
+    for row in stored:
+        if row["id"] not in discovered_ids:
+            logger.info(f"Purging stale deployment no longer in Docker inventory: {row['id']}")
+            await purge_deployment_from_db(row["id"])
 
 
 async def run_health_checks():

@@ -1,8 +1,11 @@
 from fastapi import APIRouter
-from app.models.database import fetch_all, fetch_one
+import os
+from app.models.database import fetch_all
 from app.collectors.docker_collector import get_running_containers
 
 router = APIRouter(prefix="/api", tags=["infrastructure"])
+
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 
 
 @router.get("/infrastructure")
@@ -29,12 +32,9 @@ async def get_infrastructure():
 
     containers = get_running_containers()
 
-    # Try to get containers from demo mode if empty
-    if not containers:
+    if not containers and DEMO_MODE:
         from app.collectors.docker_collector import get_docker_client
-        client = get_docker_client()
-        if not client:
-            # In demo mode, provide synthetic container list
+        if not get_docker_client():
             containers = [
                 {"name": "sample-healthy-app", "image": "sample-healthy:latest", "status": "running", "slug": "sample-healthy"},
                 {"name": "sample-crash-app", "image": "sample-crash:latest", "status": "restarting", "slug": "sample-crash"},

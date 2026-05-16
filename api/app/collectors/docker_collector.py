@@ -1,11 +1,23 @@
 import docker
 import logging
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 logger = logging.getLogger("sre")
 
 DOCKER_SOCKET = os.getenv("DOCKER_SOCKET", "/var/run/docker.sock")
+
+
+def _monitor_label_enabled(labels: dict) -> bool:
+    """Accept common truthy label spellings from Compose / Swarm."""
+    if not labels:
+        return False
+    raw = labels.get("sre.monitor")
+    if raw is None:
+        raw = labels.get("SRE.MONITOR")
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in ("true", "1", "yes", "on")
 
 
 def get_docker_client():
@@ -18,37 +30,45 @@ def get_docker_client():
         return None
 
 
-def discover_deployments() -> List[Dict]:
+def discover_deployments() -> Tuple[List[Dict], bool]:
+    """
+    List deployments from Docker labels (sre.monitor=true).
+
+    Returns (deployments, docker_ok). docker_ok is False if the socket/API is
+    unreachable — callers must not treat an empty list as "delete everything".
+    """
     client = get_docker_client()
     if not client:
-        logger.warning("Docker unavailable, returning empty deployments")
-        return []
+        logger.warning("Docker unavailable, skipping deployment discovery")
+        return [], False
 
     deployments = []
     try:
         containers = client.containers.list(all=True)
         for container in containers:
             labels = container.labels or {}
-            if labels.get("sre.monitor") == "true":
-                dep = {
-                    "id": labels.get("sre.slug", container.name),
-                    "slug": labels.get("sre.slug", container.name),
-                    "environment": labels.get("sre.environment", "production"),
-                    "git_url": labels.get("sre.git_url"),
-                    "health_url": labels.get("sre.health_url"),
-                    "browser_url": labels.get("sre.browser_url"),
-                    "expected_selector": labels.get("sre.expected_selector"),
-                    "tcp_checks": labels.get("sre.tcp_checks"),
-                    "container_id": container.id,
-                    "container_name": container.name,
-                    "image": str(container.image.tags[0]) if container.image.tags else str(container.image.id[:12]),
-                    "status": "running" if container.status == "running" else "stopped",
-                }
-                deployments.append(dep)
+            if not _monitor_label_enabled(labels):
+                continue
+            slug = labels.get("sre.slug") or labels.get("SRE.SLUG") or container.name
+            dep = {
+                "id": slug,
+                "slug": slug,
+                "environment": labels.get("sre.environment") or labels.get("SRE.ENVIRONMENT") or "production",
+                "git_url": labels.get("sre.git_url") or labels.get("SRE.GIT_URL"),
+                "health_url": labels.get("sre.health_url") or labels.get("SRE.HEALTH_URL"),
+                "browser_url": labels.get("sre.browser_url") or labels.get("SRE.BROWSER_URL"),
+                "expected_selector": labels.get("sre.expected_selector") or labels.get("SRE.EXPECTED_SELECTOR"),
+                "tcp_checks": labels.get("sre.tcp_checks") or labels.get("SRE.TCP_CHECKS"),
+                "container_id": container.id,
+                "container_name": container.name,
+                "image": str(container.image.tags[0]) if container.image.tags else str(container.image.id[:12]),
+                "status": "running" if container.status == "running" else "stopped",
+            }
+            deployments.append(dep)
+        return deployments, True
     except Exception as e:
         logger.error(f"Error discovering deployments: {e}")
-
-    return deployments
+        return [], False
 
 
 def collect_container_metrics(container_id: str) -> Optional[Dict]:

@@ -18,11 +18,7 @@ services:
       - CHECK_INTERVAL=30
       - DASHBOARD_USER=admin
       - DASHBOARD_PASS=admin
-      - DEMO_MODE=true
-    labels:
-      sre.monitor: "true"
-      sre.slug: "sre-agent-api"
-      sre.environment: "production"
+      - DEMO_MODE=false
     ports:
       - "8000:8000"
 
@@ -38,6 +34,8 @@ services:
       - sre-agent-api
 
   sample-healthy:
+    profiles:
+      - demo
     build:
       context: ./sample-healthy
       dockerfile: Dockerfile
@@ -55,6 +53,8 @@ services:
       - "8081:8080"
 
   sample-crash:
+    profiles:
+      - demo
     build:
       context: ./sample-crash
       dockerfile: Dockerfile

@@ -40,15 +40,25 @@ open http://localhost:3000
 
 The dashboard opens at **http://localhost:3000**. The API is at **http://localhost:8000**.
 
-## Demo Mode
+## Production monitoring (default)
 
-When `DEMO_MODE=true` (default), the agent seeds sample data including:
+With **`DEMO_MODE=false`** (set in `docker-compose.yml` and `.env.example`), the agent **does not seed fake deployments**. It **discovers real containers** on the VPS whose Docker labels include **`sre.monitor=true`** (`1`, `yes`, `on` are also accepted).
 
-- A **healthy** sample app that responds 200 on `/health` with `#app` selector
-- A **crashing** sample app that exits with code 1, creating a crash-loop incident
-- A **staging API** service with TCP dependency checks
-- Historical health check data for uptime charts
-- Sample Traefik 404/5xx user-facing errors
+- **`sre.health_url` / `sre.browser_url`** must work **from inside the `sre-agent-api` container**. Easiest on a VPS: use **real HTTPS URLs** (e.g. `https://yourdomain.com/health`) so Traefik/nginx terminates TLS as usual. Alternatively, attach **`sre-agent-api` to the same Docker network(s)** as your apps and use `http://service_name:port/...`.
+- Mount Traefik access logs into **`./traefik-logs`** so **User Errors** come from **live logs**, not samples.
+- If Docker discovery succeeds, deployments **removed from Docker or stripped of labels** are **purged from SQLite** (with related checks/incidents). To erase all stored history: `docker compose down -v`.
+
+Remove **`sre.monitor`** from your monitoring stack itself unless you want the agent listed as a deployment.
+
+## Demo mode & sample containers
+
+Optional demo apps are behind the Compose **`demo`** profile (they do **not** start by default):
+
+```bash
+docker compose --profile demo up -d --build
+```
+
+When **`DEMO_MODE=true`** in `.env`, the API seeds demo deployments and synthetic metrics instead of relying solely on Docker discovery, and the dashboard may show placeholder infrastructure when the socket is unavailable.
 
 ## Monitoring Your Own Services
 
@@ -63,8 +73,9 @@ services:
       sre.slug: "my-web-app"
       sre.environment: "production"
       sre.git_url: "https://github.com/org/my-app"
-      sre.health_url: "http://my-web-app:3000/health"
-      sre.browser_url: "http://my-web-app:3000"
+      # Use URLs reachable FROM inside sre-agent-api (public HTTPS recommended on a VPS)
+      sre.health_url: "https://my-web-app.example.com/health"
+      sre.browser_url: "https://my-web-app.example.com"
       sre.expected_selector: "#root"
       sre.tcp_checks: "db:5432,redis:6379,minio:9000"
 ```
@@ -73,7 +84,7 @@ services:
 
 | Label | Required | Description |
 |-------|----------|-------------|
-| `sre.monitor` | Yes | Must be `"true"` for the agent to discover this container |
+| `sre.monitor` | Yes | Truthy values: `true`, `1`, `yes`, `on` |
 | `sre.slug` | Yes | Unique name for the deployment |
 | `sre.environment` | No | Environment tag (default: `production`) |
 | `sre.git_url` | No | Git repository URL |
@@ -282,5 +293,5 @@ sre-agent/
 | `CHECK_INTERVAL` | `30` | Check interval in seconds |
 | `DASHBOARD_USER` | `admin` | Basic auth username |
 | `DASHBOARD_PASS` | `admin` | Basic auth password |
-| `DEMO_MODE` | `true` | Seed demo data when no labels found |
+| `DEMO_MODE` | `false` | Demo seeds & synthetic infra fallback (enable only for local demos) |
 | `AUTH_ENABLED` | `true` | Enable basic auth |
